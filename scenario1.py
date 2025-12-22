@@ -328,7 +328,6 @@ class MemoryMonitor:
                 except (
                     psutil.NoSuchProcess,
                     psutil.ZombieProcess,
-                    psutil.AccessDenied,
                 ):
                     continue
 
