@@ -178,7 +178,12 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
         self.shared_set.clear()
         self.lock = self.threading.Lock()
         self.start_evt = self.threading.Event()
+
+        # Ensure a fair start: all worker threads are created and parked here before we start the timed loop.
+        # Without this barrier, early threads would begin work while later threads are still being spawned,
+        # skewing contention and throughput measurements.
         self.barrier = self.threading.Barrier(cfg.workers + 1)
+
         self.per_worker = [WorkerStats(0, 0, 0) for _ in range(cfg.workers)]
 
     def start_iteration(self) -> None:
@@ -349,11 +354,9 @@ def _gil_enabled_best_effort() -> Optional[bool]:
 
 def _print_env(cfg: BenchConfig) -> None:
     print("=== environment ===")
-    print(f"python: {sys.version.replace(os.linesep, ' ')}")
-    print(f"implementation: {sys.implementation.name}")
-    print(f"os: {platform.platform()}")
-    print(f"machine: {platform.machine()}")
-    print(f"mode: {cfg.mode}")
+    print(f"Python ({sys.implementation.name}): {sys.version}")
+    print(f"OS: {platform.platform()}, arch {platform.machine()}")
+    print(f"Mode: {cfg.mode}")
     if cfg.mode == "processes":
         import multiprocessing as mp
         ctx = mp.get_context(cfg.mp_start) if cfg.mp_start else mp.get_context()
