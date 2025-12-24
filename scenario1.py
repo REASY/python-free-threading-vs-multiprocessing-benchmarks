@@ -10,6 +10,13 @@ Notes
 - In processes mode, memory is reported as SUM across parent + children PIDs.
   SUM(RSS) overcounts shared pages; PSS is best when available (Linux).
 - Memory sampling itself costs CPU. For timing comparisons, trust the overhead profile.
+
+Run examples:
+  # Free-threaded build (threads)
+  uv run --python 3.14t scenario1.py --mode threads
+
+  # Regular build (processes)
+  uv run --python 3.14+gil scenario1.py --mode processes
 """
 
 import argparse
@@ -19,27 +26,22 @@ import platform
 import statistics as stats
 import sys
 import time
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, Optional, Protocol, Tuple
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Tuple
+
+from benchmark_engine import (
+    Backend,
+    BenchmarkRunner,
+    MemStats,
+    ProcessBackend,
+    ThreadBackend,
+    WorkloadStrategy,
+)
 
 
 # ----------------------------
 # Domain Models & Interfaces
 # ----------------------------
-
-
-@dataclass
-class MemStats:
-    rss_min: Optional[int] = None
-    rss_max: Optional[int] = None
-    rss_avg: Optional[float] = None
-    uss_min: Optional[int] = None
-    uss_max: Optional[int] = None
-    uss_avg: Optional[float] = None
-    pss_min: Optional[int] = None
-    pss_max: Optional[int] = None
-    pss_avg: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -63,54 +65,6 @@ class BenchResult:
     wall_seconds: float
     iter_seconds: List[float]
     mem: Optional[MemStats]
-
-
-class Worker(Protocol):
-    """Abstraction for a running unit of work (Thread or Process)."""
-
-    def start(self) -> None: ...
-    def join(self) -> None: ...
-    def is_alive(self) -> bool: ...
-
-
-class Backend(ABC):
-    """Strategy for creating workers (Threads vs Processes)."""
-
-    @abstractmethod
-    def create_worker(self, target: Callable, args: Tuple) -> Worker:
-        pass
-
-    @abstractmethod
-    def get_pids(self, workers: List[Worker]) -> List[int]:
-        pass
-
-    @abstractmethod
-    def check_errors(self, workers: List[Worker]) -> None:
-        """Check if any worker failed and raise RuntimeError if so."""
-        pass
-
-    def get_context_name(self) -> str:
-        return "default"
-
-
-class WorkloadStrategy(ABC):
-    """Strategy for what the workers actually do."""
-
-    @abstractmethod
-    def get_target(self, cfg: BenchConfig) -> Callable:
-        pass
-
-    @abstractmethod
-    def get_args(self, cfg: BenchConfig, worker_index: int) -> Tuple:
-        pass
-
-    @abstractmethod
-    def prepare_iteration(self) -> None:
-        pass
-
-    @abstractmethod
-    def start_iteration(self) -> None:
-        pass
 
 
 # ----------------------------
@@ -162,16 +116,16 @@ class OverheadWorkload(WorkloadStrategy):
     def get_args(self, cfg: BenchConfig, worker_index: int) -> Tuple:
         return (cfg.work_iters,)
 
-    def prepare_iteration(self) -> None:
-        pass
+    def prepare_iteration(self, cfg: BenchConfig, backend: Backend) -> None:
+        gc.collect()
 
     def start_iteration(self) -> None:
         pass
 
 
 class MemoryWorkload(WorkloadStrategy):
-    def __init__(self, ctx):
-        self.ctx = ctx
+    def __init__(self, backend: Backend):
+        self.backend = backend
         self.start_evt = None
         self.ready_conns = []
 
@@ -179,12 +133,13 @@ class MemoryWorkload(WorkloadStrategy):
         return _process_entry_memory
 
     def get_args(self, cfg: BenchConfig, worker_index: int) -> Tuple:
-        parent_conn, child_conn = self.ctx.Pipe(duplex=False)
+        parent_conn, child_conn = self.backend.Pipe(duplex=False)
         self.ready_conns.append(parent_conn)
         return (cfg.work_iters, cfg.hold_ms / 1000.0, self.start_evt, child_conn)
 
-    def prepare_iteration(self) -> None:
-        self.start_evt = self.ctx.Event()
+    def prepare_iteration(self, cfg: BenchConfig, backend: Backend) -> None:
+        gc.collect()
+        self.start_evt = self.backend.Event()
         self.ready_conns = []
 
     def start_iteration(self) -> None:
@@ -195,227 +150,6 @@ class MemoryWorkload(WorkloadStrategy):
         self.start_evt.set()
 
 
-# ----------------------------
-# Backend Implementation
-# ----------------------------
-
-
-class ThreadBackend(Backend):
-    def __init__(self):
-        import threading
-
-        self.threading = threading
-
-    def create_worker(self, target: Callable, args: Tuple) -> Worker:
-        return self.threading.Thread(target=target, args=args)
-
-    def get_pids(self, workers: List[Worker]) -> List[int]:
-        return [os.getpid()]
-
-    def check_errors(self, workers: List[Worker]) -> None:
-        # Threads in Python don't easily expose exit codes like processes.
-        # If we really wanted to, we could wrap the target to catch exceptions.
-        # For this microbenchmark, we assume threads don't crash or we'd see it in stderr.
-        pass
-
-    # Threading needs its own implementation of MemoryWorkload helpers if we want to be strict,
-    # but for now we reuse the multiprocessing ones because they work with threading.Event too.
-    def Pipe(self, duplex=False):
-        # Threads can just use a dummy pipe or share memory, but for simplicity
-        # we can use a queue or just mock it.
-        class DummyPipe:
-            def send(self, val):
-                pass
-
-            def recv(self):
-                return None
-
-            def close(self):
-                pass
-
-        return DummyPipe(), DummyPipe()
-
-    def Event(self):
-        return self.threading.Event()
-
-
-class ProcessBackend(Backend):
-    def __init__(self, start_method: Optional[str]):
-        import multiprocessing as mp
-
-        mp.freeze_support()
-        self.ctx = mp.get_context(start_method) if start_method else mp.get_context()
-
-    def create_worker(self, target: Callable, args: Tuple) -> Worker:
-        return self.ctx.Process(target=target, args=args)
-
-    def get_pids(self, workers: List[Worker]) -> List[int]:
-        # Process objects have a .pid attribute
-        child_pids = [
-            getattr(w, "pid") for w in workers if getattr(w, "pid") is not None
-        ]
-        return [os.getpid()] + child_pids
-
-    def check_errors(self, workers: List[Worker]) -> None:
-        for w in workers:
-            exitcode = getattr(w, "exitcode", None)
-            if exitcode is not None and exitcode != 0:
-                raise RuntimeError(f"Process worker exited with {exitcode}")
-
-    def get_context_name(self) -> str:
-        return self.ctx.get_start_method()
-
-    def Pipe(self, duplex=False):
-        return self.ctx.Pipe(duplex)
-
-    def Event(self):
-        return self.ctx.Event()
-
-
-# ----------------------------
-# Memory Monitoring
-# ----------------------------
-
-
-@dataclass
-class _MetricAgg:
-    min_v: Optional[int] = None
-    max_v: Optional[int] = None
-    sum_v: int = 0
-    n: int = 0
-
-    def add(self, v: int) -> None:
-        if self.min_v is None or v < self.min_v:
-            self.min_v = v
-        if self.max_v is None or v > self.max_v:
-            self.max_v = v
-        self.sum_v += v
-        self.n += 1
-
-    def avg(self) -> Optional[float]:
-        return self.sum_v / self.n if self.n > 0 else None
-
-
-class MemoryMonitor:
-    def __init__(self, interval_s: float):
-        self.interval_s = max(interval_s, 0.001)
-
-    def sample_until(
-        self, pids: Iterable[int], is_done: Callable[[], bool]
-    ) -> MemStats:
-        import psutil
-
-        rss_agg, uss_agg, pss_agg = _MetricAgg(), _MetricAgg(), _MetricAgg()
-
-        while True:
-            rss_sum, uss_sum, pss_sum = 0, 0, 0
-            have_uss, have_pss, saw_any = True, True, False
-
-            for pid in pids:
-                try:
-                    p = psutil.Process(pid)
-                    info = p.memory_full_info()
-                    rss_sum += int(info.rss)
-                    saw_any = True
-                    if hasattr(info, "uss"):
-                        uss_sum += int(info.uss)
-                    else:
-                        have_uss = False
-                    if hasattr(info, "pss"):
-                        pss_sum += int(info.pss)
-                    else:
-                        have_pss = False
-                except (
-                    psutil.NoSuchProcess,
-                    psutil.ZombieProcess,
-                ):
-                    continue
-
-            if saw_any:
-                rss_agg.add(rss_sum)
-                if have_uss:
-                    uss_agg.add(uss_sum)
-                if have_pss:
-                    pss_agg.add(pss_sum)
-
-            if is_done():
-                break
-            time.sleep(self.interval_s)
-
-        return MemStats(
-            rss_min=rss_agg.min_v,
-            rss_max=rss_agg.max_v,
-            rss_avg=rss_agg.avg(),
-            uss_min=uss_agg.min_v,
-            uss_max=uss_agg.max_v,
-            uss_avg=uss_agg.avg(),
-            pss_min=pss_agg.min_v,
-            pss_max=pss_agg.max_v,
-            pss_avg=pss_agg.avg(),
-        )
-
-
-# ----------------------------
-# Orchestrator
-# ----------------------------
-
-
-class BenchmarkRunner:
-    def __init__(self, backend: Backend, workload: WorkloadStrategy):
-        self.backend = backend
-        self.workload = workload
-
-    def run(self, cfg: BenchConfig) -> BenchResult:
-        # Warmup
-        for _ in range(cfg.warmup):
-            self._run_iteration(cfg, sample_mem=False)
-
-        per_iter: List[float] = []
-        last_mem: Optional[MemStats] = None
-
-        t0 = time.perf_counter()
-        for _ in range(cfg.iterations):
-            it_duration, mem = self._run_iteration(cfg, sample_mem=cfg.mem_sample)
-            per_iter.append(it_duration)
-            if mem:
-                last_mem = mem
-        wall = time.perf_counter() - t0
-
-        return BenchResult(wall_seconds=wall, iter_seconds=per_iter, mem=last_mem)
-
-    def _run_iteration(
-        self, cfg: BenchConfig, sample_mem: bool
-    ) -> Tuple[float, Optional[MemStats]]:
-        gc.collect()
-        self.workload.prepare_iteration()
-
-        workers = [
-            self.backend.create_worker(
-                self.workload.get_target(cfg), self.workload.get_args(cfg, i)
-            )
-            for i in range(cfg.workers)
-        ]
-
-        it0 = time.perf_counter()
-        for w in workers:
-            w.start()
-
-        self.workload.start_iteration()
-
-        mem_stats = None
-        if sample_mem:
-            monitor = MemoryMonitor(cfg.mem_interval_ms / 1000.0)
-            mem_stats = monitor.sample_until(
-                pids=self.backend.get_pids(workers),
-                is_done=lambda: all(not w.is_alive() for w in workers),
-            )
-
-        for w in workers:
-            w.join()
-
-        self.backend.check_errors(workers)
-
-        return time.perf_counter() - it0, mem_stats
 
 
 # ----------------------------
@@ -573,7 +307,18 @@ def main() -> int:
 
     _print_env(cfg, backend)
     runner = BenchmarkRunner(backend, workload)
-    res = runner.run(cfg)
+    run_res = runner.run(
+        cfg,
+        warmup=cfg.warmup,
+        iterations=cfg.iterations,
+        sample_mem=cfg.mem_sample,
+        mem_interval_s=cfg.mem_interval_ms / 1000.0,
+    )
+    res = BenchResult(
+        wall_seconds=run_res.wall_seconds,
+        iter_seconds=run_res.iter_seconds,
+        mem=run_res.mem,
+    )
     _summarize(res)
     return 0
 
