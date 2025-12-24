@@ -155,7 +155,7 @@ Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny 
 
 #### Memory profile (avg during the 1s hold)
 
-Linux gives you **PSS**, which is the least-lie-y metric for multi-process memory.
+Linux gives you **PSS**, which is the best available approximation on Linux for multi-process memory.
 
 | Mode                   | Start method | RSS avg (MB) | USS avg (MB) | PSS avg (MB) |
 |------------------------|-------------:|-------------:|-------------:|-------------:|
@@ -285,6 +285,8 @@ Cost model (why the gap is so large):
 
 - Threads critical section: a few pointer-chasing ops + a hash.
 - Manager critical section: syscall/pipe + pickle + manager scheduling + unpickle + dict op + reply.
+
+> IPC transport differs by OS; the cost profile is similar.
 
 The lock `lock` isn’t protecting dict internals; it’s protecting the **check-then-insert** as one atomic operation: we do two Manager proxy calls (uid in dict, dict[uid]=1). Those are IPC + pickling + context switches. So the critical section becomes expensive, and everyone queues behind it. **That** is why the latency numbers you are about to see look the way they do — we added a **mini client/server system** in the hottest part of the loop.
 
