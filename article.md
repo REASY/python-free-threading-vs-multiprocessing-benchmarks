@@ -46,7 +46,7 @@ Scenario 1 is the "before you even talk about your workload" benchmark.
 
 ## TL;DR punchline
 
-* Threads: low control‑plane cost, tight memory.
+* Threads: low control‑plane cost, tight memory footprint.
 * Processes: fine for chunky work; brutal for tiny work on spawn-heavy platforms.
 * Shared state: can erase your parallelism no matter what you pick.
 
@@ -54,7 +54,7 @@ Scenario 1 is the "before you even talk about your workload" benchmark.
 
 ### Python builds
 
-| OS                                 |                                                                GIL Build | Free-Threading Build                                                                          |
+| OS                                 |                                                                GIL build | Free-Threading build                                                                          |
 |------------------------------------|-------------------------------------------------------------------------:|-----------------------------------------------------------------------------------------------|
 | Ubuntu 25.10 (Linux 6.17, x86_64)  |            cpython, 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ] | cpython, 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]            | 
 | Windows 11 Pro (25H2, AMD64)       | cpython, 3.14.2 (main, Dec 9 2025, 19:03:14) [MSC v.1944 64 bit (AMD64)] | cpython, 3.14.2 free-threading build (main, Dec 9 2025, 19:04:12) [MSC v.1944 64 bit (AMD64)] |
@@ -65,7 +65,7 @@ Scenario 1 is the "before you even talk about your workload" benchmark.
    - RAM: Corsair CMT64GX5M2B6000Z30 2x32GiB DDR5 6000 MT/s
 2. **Machine B (macOS): Apple M3 Max**
 
-Threads use the Free‑Threading Build and processes use the GIL Build.
+Threads use the free‑threading build and processes use the GIL build. This is a pragmatic comparison: threads only get interesting on free‑threading, while most people still run processes on stock CPython. It does mean interpreter-build differences are in the mix. If you want a pure build-to-build control, re-run processes under the free‑threading build on the same OS to measure that delta explicitly.
 
 ## Scenario 1: "What’s the tax of choosing threads vs processes?"
 
@@ -95,6 +95,8 @@ There are two profiles:
 - Workers do one tiny CPU task and immediately exit
 - Run **1000 iterations**
 - Goal: **isolate startup + teardown overhead**
+
+> Pool caveat: this is worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead is mostly IPC/serialization. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
 
 How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
 
@@ -278,6 +280,11 @@ The benchmark is implemented in `scenario2_shared_unique_set.py`:
   - each process does **IPC** to the manager for `uid in dict` and `dict[uid] = 1`
 
 **"Wait, why use `Manager`?"** I know, I know — I could have used raw `multiprocessing.shared_memory` or Redis to optimize this. But most Python developers reach for `Manager` because it looks like a Python dict. This benchmark measures the cost of that convenience.
+
+Cost model (why the gap is so large):
+
+- Threads critical section: a few pointer-chasing ops + a hash.
+- Manager critical section: syscall/pipe + pickle + manager scheduling + unpickle + dict op + reply.
 
 The lock `lock` isn’t protecting dict internals; it’s protecting the **check-then-insert** as one atomic operation: we do two Manager proxy calls (uid in dict, dict[uid]=1). Those are IPC + pickling + context switches. So the critical section becomes expensive, and everyone queues behind it. **That** is why the latency numbers you are about to see look the way they do — we added a **mini client/server system** in the hottest part of the loop.
 
