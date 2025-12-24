@@ -67,22 +67,22 @@ pss_min: 35523584  pss_max: 36047872  pss_avg: 36022905
 ##### Profile overhead
 
 ```console
-✗ uv run scenario1.py --mode processes                
+✗ uv run --python 3.14+gil scenario1.py --mode processes
 === environment ===
-Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
+Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 Mode: processes
 Profile: overhead
 mp_start_method: forkserver
-gil_enabled: False
+gil_enabled: True
 workers: 8  iterations: 1000  warmup: 5  work_iters: 20000
 ===================
 
 === result ===
-total_wall_s: 5.004588
-avg_iter_s: 0.004194121
-p50_iter_s: 0.004070353
-p95_iter_s: 0.004965644
+total_wall_s: 5.369269
+avg_iter_s: 0.004226081
+p50_iter_s: 0.004119016
+p95_iter_s: 0.004885248
 
 memory: (disabled)
 ==============
@@ -91,28 +91,28 @@ memory: (disabled)
 ##### Profile memory
 
 ```console
-✗ uv run scenario1.py --mode processes --profile memory
+✗ uv run --python 3.14+gil scenario1.py --mode processes --profile memory
 === environment ===
-Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
+Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 Mode: processes
 Profile: memory
 mp_start_method: forkserver
-gil_enabled: False
+gil_enabled: True
 workers: 8  iterations: 30  warmup: 2  work_iters: 20000
 hold_ms: 1000  mem_sample: True  mem_interval_ms: 50
 ===================
 
 === result ===
-total_wall_s: 30.861188
-avg_iter_s: 1.026743398
-p50_iter_s: 1.026735645
-p95_iter_s: 1.031458665
+total_wall_s: 30.805028
+avg_iter_s: 1.024222078
+p50_iter_s: 1.023542551
+p95_iter_s: 1.029411792
 
 --- memory (bytes) via psutil.memory_full_info() ---
-rss_min: 30912512  rss_max: 220114944  rss_avg: 211102573
-uss_min: 18059264  uss_max: 38993920  uss_avg: 37992740
-pss_min: 21731328  pss_max: 57654272  pss_avg: 55939559
+rss_min: 28262400  rss_max: 180404224  rss_avg: 173159375
+uss_min: 16506880  uss_max: 38678528  uss_avg: 37621174
+pss_min: 19811328  pss_max: 52969472  pss_avg: 51388952
 ---------------------------------------------------
 ==============
 ```
