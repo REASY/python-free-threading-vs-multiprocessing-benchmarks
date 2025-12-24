@@ -52,10 +52,12 @@ from benchmark_engine import (
 # Deterministic per-worker PRNG
 # ----------------------------
 
+
 class SplitMix64:
     """
     Tiny fast PRNG. Deterministic, cheap, good enough for benchmarking.
     """
+
     __slots__ = ("state",)
 
     def __init__(self, seed: int):
@@ -73,16 +75,17 @@ class SplitMix64:
 # Benchmark config/results
 # ----------------------------
 
+
 @dataclass(frozen=True)
 class BenchConfig:
-    mode: str                 # threads | processes
+    mode: str  # threads | processes
     workers: int
     warmup: int
 
     duration_ms: int
-    id_space: int             # IDs are mapped to [0, id_space) to control duplicates
+    id_space: int  # IDs are mapped to [0, id_space) to control duplicates
 
-    mp_start: Optional[str]   # spawn | forkserver | fork | None
+    mp_start: Optional[str]  # spawn | forkserver | fork | None
 
 
 @dataclass(frozen=True)
@@ -97,9 +100,11 @@ class BenchResult:
     wall_s: float
     stats: WorkerStats
 
+
 # ----------------------------
 # Scenario implementation
 # ----------------------------
+
 
 def _proc_worker_shared_unique_set(
     worker_index: int,
@@ -138,7 +143,7 @@ def _proc_worker_shared_unique_set(
         t0 = time.perf_counter_ns()
         lock.acquire()
         t1 = time.perf_counter_ns()
-        lock_wait_ns += (t1 - t0)
+        lock_wait_ns += t1 - t0
 
         try:
             # Critical section: check + insert
@@ -154,6 +159,7 @@ def _proc_worker_shared_unique_set(
         stats_conn.send((attempts, inserts, lock_wait_ns))
     finally:
         stats_conn.close()
+
 
 class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
     def __init__(self):
@@ -218,7 +224,7 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
             self.lock.acquire()
             try:
                 t1 = time.perf_counter_ns()
-                lock_wait_ns += (t1 - inner_t0)
+                lock_wait_ns += t1 - inner_t0
 
                 if uid not in self.shared_set:
                     self.shared_set.add(uid)
@@ -341,6 +347,7 @@ def _sum_stats(items: List[WorkerStats]) -> WorkerStats:
 # Reporting
 # ----------------------------
 
+
 def _gil_enabled_best_effort() -> Optional[bool]:
     for attr in ("_is_gil_enabled", "_get_gil_enabled"):
         fn = getattr(sys, attr, None)
@@ -359,12 +366,15 @@ def _print_env(cfg: BenchConfig) -> None:
     print(f"Mode: {cfg.mode}")
     if cfg.mode == "processes":
         import multiprocessing as mp
+
         ctx = mp.get_context(cfg.mp_start) if cfg.mp_start else mp.get_context()
         print(f"mp_start_method: {ctx.get_start_method()}")
     gil = _gil_enabled_best_effort()
     if gil is not None:
         print(f"gil_enabled: {gil}")
-    print(f"workers: {cfg.workers}  duration_ms: {cfg.duration_ms}  id_space: {cfg.id_space}")
+    print(
+        f"workers: {cfg.workers}  duration_ms: {cfg.duration_ms}  id_space: {cfg.id_space}"
+    )
     print("===================")
 
 
@@ -384,13 +394,13 @@ def _report(res: BenchResult, cfg: BenchConfig) -> None:
     print(f"inserts_per_s: {inserts_s:.2f}")
     print(f"avg_lock_wait_ns: {avg_lock_wait_ns:.1f}")
 
-
     print("==============\n")
 
 
 # ----------------------------
 # CLI (profile defaults)
 # ----------------------------
+
 
 def _default_workers() -> int:
     return 8

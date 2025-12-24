@@ -150,8 +150,6 @@ class MemoryWorkload(WorkloadStrategy):
         self.start_evt.set()
 
 
-
-
 # ----------------------------
 # CLI & Main
 # ----------------------------
