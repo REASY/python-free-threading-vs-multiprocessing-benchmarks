@@ -65,7 +65,7 @@ Scenario 1 is the "before you even talk about your workload" benchmark.
    - RAM: Corsair CMT64GX5M2B6000Z30 2x32GiB DDR5 6000 MT/s
 2. **Machine B (macOS): Apple M3 Max**
 
-Threads use the free‑threading build and processes use the GIL build. This is a pragmatic comparison: threads only get interesting on free‑threading, while most people still run processes on stock CPython. It does mean interpreter-build differences are in the mix. If you want a pure build-to-build control, re-run processes under the free‑threading build on the same OS to measure that delta explicitly.
+Threads use the free‑threading build and processes use the GIL build. This is a pragmatic comparison: threads only get interesting on free‑threading, while most people still run processes on stock CPython. It does mean interpreter-build differences are in the mix, and free‑threading can shift allocator/GC/lock behavior. If you want a pure build-to-build control, re-run processes under the free‑threading build on the same OS to measure that delta explicitly.
 
 ## Scenario 1: "What’s the tax of choosing threads vs processes?"
 
@@ -149,9 +149,8 @@ Same knobs everywhere:
 | processes              |   forkserver |         4.474 |               2.44× |
 | processes              |        spawn |        32.851 |              17.93× |
 
-Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny jobs, **`fork` wins**, `forkserver` is okay, and `spawn` is the "boot a fresh interpreter" tax. It’s the safest and most portable method… and also the one that makes tiny tasks feel like trying to start Kubernetes for every HTTP request.
-> Crucial Note on spawn: The 32ms result is actually the best case. This benchmark uses a tiny script. In a real application (e.g., Django, FastAPI, or a script importing Pandas), spawn has to re-import your dependencies for every worker. That 32ms could easily become 200ms–500ms+ per task in the real world.
-
+Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny jobs, **`fork` wins**, `forkserver` is okay, and `spawn` is the "boot a fresh interpreter" tax. It’s the safest and most portable method… and also the one that makes tiny tasks feel like trying to start Kubernetes for every HTTP request. On Linux/macOS, `fork` benefits from copy‑on‑write;
+> Crucial Note on fork: Forking after threads is unsafe: the child inherits the **locked state** but **not the threads** that would unlock it. (See CPython issue: https://github.com/python/cpython/issues/84559)
 
 #### Memory profile (avg during the 1s hold)
 
@@ -185,7 +184,7 @@ Windows is effectively **spawn-only**, and you can see it in the bill.
 
 #### Memory profile (avg during the 1s hold)
 
-Again: no PSS, so **USS** is your best "real cost" signal.
+Again: no PSS, so **USS** is the closest analogue to "private cost" on Windows.
 
 | Mode                   | Start method | RSS avg (MB) | USS avg (MB) | note                            |
 |------------------------|-------------:|-------------:|-------------:|---------------------------------|
@@ -208,7 +207,7 @@ Again: no PSS, so **USS** is your best "real cost" signal.
 What to notice:
 
 - `spawn` on macOS is **brutal** for short jobs. Every iteration is basically "start a mini Python program 8 times".
-- `fork` is much cheaper **because it clones an existing process** (copy‑on‑write does a lot of the heavy lifting), but in a multi‑threaded parent it can be unsafe; Apple recommends `spawn` for safety.
+- `fork` is much cheaper **because it clones an existing process** (copy‑on‑write does a lot of the heavy lifting), but `fork` after threads is unsafe.
 
 #### Memory profile (avg during the 1s hold)
 
@@ -284,7 +283,7 @@ The benchmark is implemented in `scenario2_shared_unique_set.py`:
 Cost model (why the gap is so large):
 
 - Threads critical section: a few pointer-chasing ops + a hash.
-- Manager critical section: IPC transport (pipe/AF_UNIX/named pipe) + pickle + manager scheduling + unpickle + dict op + reply.
+- Manager critical section: IPC transport (pipe/AF_UNIX/named pipe) + pickle + manager scheduling + manager GIL + unpickle + dict op + reply.
 
 > IPC transport differs by OS; the cost profile is similar.
 
@@ -366,3 +365,10 @@ If you’re in **processes**:
   - **real shared memory** only if you absolutely must (and you’re ready for pain)
 
 Scenario 2 is the cautionary tale: multiprocessing gives parallel CPU, but a shared mutable state can delete it.
+
+## References
+- [Python support for free threading](https://docs.python.org/3/howto/free-threading-python.html)
+- [multiprocessing — Process-based parallelism](https://docs.python.org/3/library/multiprocessing.html)
+- [fork(2) — Linux manual page](https://man7.org/linux/man-pages/man2/fork.2.html)
+- [psutil.Process.memory_full_info](https://psutil.readthedocs.io/en/latest/index.html#psutil.Process.memory_full_info)
+- [Memory Vss/rss/pss/uss noun Explanation](https://topic.alibabacloud.com/a/memory-vssrsspssuss-noun-explanation_8_8_31217546.html)
