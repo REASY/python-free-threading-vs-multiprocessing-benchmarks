@@ -96,7 +96,7 @@ There are two profiles:
 - Run **1000 iterations**
 - Goal: **isolate startup + teardown overhead**
 
-> Pool caveat: this is worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead is mostly IPC/serialization. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
+> Pool caveat: this is worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead shifts to dispatch + IPC/serialization. On Windows/macOS, worker creation is still `spawn`, even for pools. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
 
 How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
 
@@ -155,7 +155,7 @@ Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny 
 
 #### Memory profile (avg during the 1s hold)
 
-Linux gives you **PSS**, which is the best available approximation on Linux for multi-process memory.
+Linux gives you **PSS**, which is the best available approximation for multi-process memory on Linux.
 
 | Mode                   | Start method | RSS avg (MB) | USS avg (MB) | PSS avg (MB) |
 |------------------------|-------------:|-------------:|-------------:|-------------:|
@@ -208,7 +208,7 @@ Again: no PSS, so **USS** is your best "real cost" signal.
 What to notice:
 
 - `spawn` on macOS is **brutal** for short jobs. Every iteration is basically "start a mini Python program 8 times".
-- `fork` is much cheaper **because it clones an existing process** (copy‑on‑write does a lot of the heavy lifting).
+- `fork` is much cheaper **because it clones an existing process** (copy‑on‑write does a lot of the heavy lifting), but in a multi‑threaded parent it can be unsafe; Apple recommends `spawn` for safety.
 
 #### Memory profile (avg during the 1s hold)
 
@@ -284,7 +284,7 @@ The benchmark is implemented in `scenario2_shared_unique_set.py`:
 Cost model (why the gap is so large):
 
 - Threads critical section: a few pointer-chasing ops + a hash.
-- Manager critical section: syscall/pipe + pickle + manager scheduling + unpickle + dict op + reply.
+- Manager critical section: IPC transport (pipe/AF_UNIX/named pipe) + pickle + manager scheduling + unpickle + dict op + reply.
 
 > IPC transport differs by OS; the cost profile is similar.
 
