@@ -13,10 +13,10 @@ Notes
 
 Run examples:
   # Free-threaded build (threads)
-  uv run --python 3.14t scenario1.py --mode threads
+  uv run --python 3.14t scenario1_overhead.py --mode threads
 
   # Regular build (processes)
-  uv run --python 3.14+gil scenario1.py --mode processes
+  uv run --python 3.14+gil scenario1_overhead.py --mode processes
 """
 
 import argparse

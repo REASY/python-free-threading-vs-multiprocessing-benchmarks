@@ -14,7 +14,7 @@
 ##### Profile overhead
 
 ```console
-✗ uv run --python 3.14t scenario1.py --mode threads
+✗ uv run --python 3.14t scenario1_overhead.py --mode threads
 === environment ===
 Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
@@ -37,7 +37,7 @@ memory: (disabled)
 ##### Profile memory
 
 ```console
-✗ uv run --python 3.14t scenario1.py --mode threads --profile memory 
+✗ uv run --python 3.14t scenario1_overhead.py --mode threads --profile memory 
 === environment ===
 Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
@@ -67,7 +67,7 @@ pss_min: 35523584  pss_max: 36047872  pss_avg: 36022905
 ##### Profile overhead
 
 ```console
-✗ uv run --python 3.14+gil scenario1.py --mode processes
+✗ uv run --python 3.14+gil scenario1_overhead.py --mode processes
 === environment ===
 Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
@@ -91,7 +91,7 @@ memory: (disabled)
 ##### Profile memory
 
 ```console
-✗ uv run --python 3.14+gil scenario1.py --mode processes --profile memory
+✗ uv run --python 3.14+gil scenario1_overhead.py --mode processes --profile memory
 === environment ===
 Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
