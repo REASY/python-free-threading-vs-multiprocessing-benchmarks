@@ -38,6 +38,8 @@ from benchmark_engine import (
     WorkloadStrategy,
 )
 
+from multiprocessing.connection import Connection
+from multiprocessing import synchronize
 
 # ----------------------------
 # Domain Models & Interfaces
@@ -93,7 +95,7 @@ def _process_entry_overhead(work_iters: int) -> None:
 
 
 def _process_entry_memory(
-    work_iters: int, hold_s: float, start_evt, ready_conn
+    work_iters: int, hold_s: float, start_evt: synchronize.Event, ready_conn: Connection
 ) -> None:
     # Make the process "real" before we signal ready (imports, allocator, etc.)
     _cpu_tiny_work(1000)
@@ -126,8 +128,8 @@ class OverheadWorkload(WorkloadStrategy):
 class MemoryWorkload(WorkloadStrategy):
     def __init__(self, backend: Backend):
         self.backend = backend
-        self.start_evt = None
-        self.ready_conns = []
+        self.start_evt: Optional[synchronize.Event] = None
+        self.ready_conns: List[Connection] = []
 
     def get_target(self, cfg: BenchConfig) -> Callable:
         return _process_entry_memory

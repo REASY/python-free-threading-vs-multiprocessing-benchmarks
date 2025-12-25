@@ -47,6 +47,10 @@ from benchmark_engine import (
     WorkloadStrategy,
 )
 
+from multiprocessing import synchronize
+from multiprocessing.connection import Connection
+from multiprocessing.managers import DictProxy, SyncManager
+
 
 # ----------------------------
 # Deterministic per-worker PRNG
@@ -110,11 +114,11 @@ def _proc_worker_shared_unique_set(
     worker_index: int,
     id_space: int,
     duration_s: float,
-    start_evt,
-    lock,
-    shared_dict,
-    ready_conn,
-    stats_conn,
+    start_evt: synchronize.Event,
+    lock: synchronize.SemLock,
+    shared_dict: DictProxy,
+    ready_conn: Connection,
+    stats_conn: Connection,
 ) -> None:
     """
     Process worker for scenario 2.
@@ -167,9 +171,9 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
 
         self.threading = threading
         self.shared_set: set[int] = set()
-        self.lock = None
-        self.start_evt = None
-        self.barrier = None
+        self.lock: Optional[threading.Lock] = None
+        self.start_evt: Optional[threading.Event] = None
+        self.barrier: Optional[threading.Barrier] = None
         self.per_worker: List[WorkerStats] = []
         self.cfg: Optional[BenchConfig] = None
 
@@ -243,12 +247,12 @@ class SharedUniqueSetProcessWorkload(WorkloadStrategy):
     def __init__(self, backend: ProcessBackend):
         self.backend = backend
         self.ctx = backend.ctx
-        self.manager = self.ctx.Manager()
-        self.shared_dict = self.manager.dict()
-        self.lock = self.ctx.Lock()
-        self.start_evt = None
-        self.ready_conns = []
-        self.stat_conns = []
+        self.manager: SyncManager = self.ctx.Manager()
+        self.shared_dict: DictProxy = self.manager.dict()
+        self.lock: synchronize.Lock = self.ctx.Lock()
+        self.start_evt: Optional[synchronize.Event] = None
+        self.ready_conns: List[Connection] = []
+        self.stat_conns: List[Connection] = []
         self.duration_s = 0.0
 
     def get_target(self, cfg: BenchConfig):
