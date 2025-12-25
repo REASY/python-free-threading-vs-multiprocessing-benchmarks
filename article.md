@@ -120,6 +120,8 @@ How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-
 - Memory stats are summed across **the parent and all worker processes**
 - Goal: **measure memory footprint under sustained load**
 
+> **Note:** RSS/USS/PSS availability varies by OS, and frequent PSS sampling (especially on Linux) introduces significant overhead. Treat this profile as a **footprint probe**, not a timing benchmark.
+
 How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
 
 | Mode                   | Start method |                                                                                                  Command |
@@ -152,7 +154,7 @@ Same knobs everywhere:
 | processes              |        spawn |        32.851 |              17.93× |
 
 Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny jobs, **`fork` wins**, `forkserver` is okay, and `spawn` is the "boot a fresh interpreter" tax. It’s the safest and most portable method… and also the one that makes tiny tasks feel like trying to start Kubernetes for every HTTP request. On Linux/macOS, `fork` benefits from copy‑on‑write;
-> Crucial Note on fork: Forking after threads is unsafe and could lead to deadlocks: the child inherits the **locked state** but **not the threads** that would unlock it. (See CPython issue: https://github.com/python/cpython/issues/84559)
+> Crucial Note on fork: `fork()`'ing a multithreaded process is unsafe and could lead to deadlocks: the child inherits the **locked state** but **not the threads** that would unlock it, even invisible background threads from libraries make this unsafe. (See CPython issue: https://github.com/python/cpython/issues/84559)
 
 #### Memory profile (avg during the 1s hold)
 
@@ -373,6 +375,8 @@ Scenario 2 is the cautionary tale: multiprocessing gives parallel CPU, but a sha
 Scenario 2 used a `Manager().dict()` and a shared lock, which turns every "check + insert" into IPC.  
 Scenario 3 replaces that with **M writer processes**, each owning a shard of the set, and routes items by hash so the same key always lands on the same writer.
 
+If this sounds familiar, it’s because it’s effectively the **Actor Model** (think Erlang or Akka): workers hold private state and communicate purely via messages, removing the need for locks entirely.
+
 ### Workload idea
 
 - **M writer processes** each hold a local `set`.
@@ -385,7 +389,7 @@ We’ve removed the manager proxy and the shared lock; the only shared cost is I
 
 ### How to run
 
-`uv run --python 3.14+gil python scenario3_sharded_writer.py --writers N`
+`uv run --python 3.14+gil scenario3_sharded_writer.py --writers N`
 
 ![scenario3_example.png](scenario3_example.png)
 
@@ -408,4 +412,3 @@ Sharding scales it further, and the mean ACK wait drops as writers fan out, but 
 - [multiprocessing — Process-based parallelism](https://docs.python.org/3/library/multiprocessing.html)
 - [fork(2) — Linux manual page](https://man7.org/linux/man-pages/man2/fork.2.html)
 - [psutil.Process.memory_full_info](https://psutil.readthedocs.io/en/latest/index.html#psutil.Process.memory_full_info)
-- [Memory Vss/rss/pss/uss noun Explanation](https://topic.alibabacloud.com/a/memory-vssrsspssuss-noun-explanation_8_8_31217546.html)
