@@ -399,12 +399,12 @@ We’ve removed the manager proxy and the shared lock; the only shared cost is I
 
 **8 producers, varying writer shards:**
 
-| writers |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, ns | avg ack_wait, ns |
+| writers |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, µs | avg ack_wait, µs |
 |---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
-| 1       | 329,334.26 | 303,417.59 |         7.87 |             2,075 |           21,466 |
-| 2       | 556,337.00 | 485,052.27 |        12.81 |             2,406 |           11,339 |
-| 4       | 673,558.13 | 571,169.31 |        15.20 |             2,653 |            8,561 |
-| 8       | 711,093.02 | 597,812.42 |        15.93 |             2,781 |            7,775 |
+| 1       | 329,334.26 | 303,417.59 |         7.87 |              2.08 |            21.47 |
+| 2       | 556,337.00 | 485,052.27 |        12.81 |              2.41 |            11.34 |
+| 4       | 673,558.13 | 571,169.31 |        15.20 |              2.65 |             8.56 |
+| 8       | 711,093.02 | 597,812.42 |        15.93 |              2.78 |             7.78 |
 
 Compared to Scenario 2's ~50k ops/s for manager+lock, even the 1‑writer baseline is ~6× faster.  
 Sharding scales it further, and the mean ACK wait drops as writers fan out, but the queue put cost stays flat. That tells you the ceiling is still IPC + scheduling, not the set itself.
@@ -417,11 +417,11 @@ I focused the deep dive on Linux, but I also ran the same workloads on the spawn
 
 `avg lock wait` is the mean per-op time spent waiting to acquire the lock.
 
-| OS          | threads ops/s | processes ops/s (`spawn` + `Manager` + lock) | relative to threads | avg lock wait (threads) | avg lock wait (processes) |
-|-------------|--------------:|---------------------------------------------:|--------------------:|-------------------------:|--------------------------:|
-| Linux       |     1,098,066 |                                       50,333 |               21.8× |                  5.32 µs |                 138.00 µs |
-| macOS       |       677,008 |                                       17,932 |               37.8× |                  9.66 µs |                 388.79 µs |
-| Windows 11  |       432,936 |                                       28,102 |               15.4× |                 14.46 µs |                 245.33 µs |
+| OS         | threads ops/s | processes ops/s (`spawn` + `Manager` + lock) | relative to threads | avg lock wait (threads) | avg lock wait (processes) |
+|------------|--------------:|---------------------------------------------:|--------------------:|------------------------:|--------------------------:|
+| Linux      |     1,098,066 |                                       50,333 |               21.8× |                 5.32 µs |                 138.00 µs |
+| macOS      |       677,008 |                                       17,932 |               37.8× |                 9.66 µs |                 388.79 µs |
+| Windows 11 |       432,936 |                                       28,102 |               15.4× |                14.46 µs |                 245.33 µs |
 
 For Linux, the processes row uses `spawn` for apples-to-apples. The start method doesn’t matter much here because the `Manager` proxy dominates the cost anyway.
 
@@ -429,11 +429,11 @@ For Linux, the processes row uses `spawn` for apples-to-apples. The start method
 
 Scenario 3 is process-only and bottlenecked by IPC.
 
-| OS          | mp start |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, ns | avg ack_wait, ns |
-|-------------|:---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
-| Linux       | spawn    | 704,259.92 | 592,303.88 |        15.90 |             2,801 |            7,778 |
-| macOS       | spawn    | 147,001.93 | 141,639.76 |         3.65 |            15,082 |           36,583 |
-| Windows 11  | spawn    | 259,252.28 | 242,797.56 |         6.35 |             8,277 |           20,772 |
+| OS         | mp start |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, µs | avg ack_wait, µs |
+|------------|:---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
+| Linux      | spawn    | 704,259.92 | 592,303.88 |        15.90 |              2.80 |             7.78 |
+| macOS      | spawn    | 147,001.93 | 141,639.76 |         3.65 |             15.08 |            36.58 |
+| Windows 11 | spawn    | 259,252.28 | 242,797.56 |         6.35 |              8.28 |            20.77 |
 
 ## Final Thoughts
 
