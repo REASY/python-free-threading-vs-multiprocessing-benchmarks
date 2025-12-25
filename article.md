@@ -411,13 +411,13 @@ Sharding scales it further, and the mean ACK wait drops as writers fan out, but 
 
 We started by asking if you should swap processes for free-threaded threads.
 
-The data says **yes, and it might let you write simpler code.**
+In these benchmarks, for **fine-grained CPU work**, the answer is often **yes** — and it can simplify the implementation.
 
-1.  **For fine-grained tasks**, free-threading is a massive win. You save the "boot a new Python" tax of `spawn` and the memory duplication of processes.
-2.  **Threads are just faster.** Even a "naive" shared lock in free-threading (**~1.1M ops/s**) beat the optimized sharded architecture in processes (**~711k ops/s**).
-3.  **Processes require complexity.** To get decent performance with processes, we had to invent a sharded writer system (Scenario 3) just to escape the `Manager` bottleneck. With threads, we just used a `Lock`, and it won.
+1. **Fine-grained tasks:** threads avoid the "boot a fresh interpreter" tax of `spawn` (the default reality on Windows, and common on macOS). Pools amortize some cost, but per-process startup can still dominate tiny jobs.
+2. **Shared state:** the big cliff isn’t “processes are slow” — it’s that *shared mutable state across processes* usually means IPC + serialization. In Scenario 2, `Manager().dict()` turns a tiny critical section into a client/server round-trip. In Scenario 3, sharding recovers throughput, but every op still pays an IPC + ACK tax.
+3. **Choosing the tool:** use processes when you need isolation (crash containment, separate heaps, differing native libraries) or when tasks are chunky enough that startup/IPC fades into the noise. Use free-threaded threads when you want low overhead and true shared memory, and you can keep lock contention under control.
 
-Free-threading gives you a lighter, faster primitive. It turns "distributed systems problems" back into "local programming problems."
+Free-threading doesn’t eliminate hard concurrency problems — but it does turn a lot of “parallel CPU + shared memory” designs back into single-process engineering problems instead of multi-process coordination problems.
 
 ## References
 - [Python support for free threading](https://docs.python.org/3/howto/free-threading-python.html)
