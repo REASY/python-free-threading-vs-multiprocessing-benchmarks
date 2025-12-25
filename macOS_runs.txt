@@ -1,0 +1,52 @@
+➜  python-free-threading-vs-multiprocessing-benchmarks git:(main) ✗ uv run --python 3.14t python scenario2_shared_unique_set.py --mode threads
+=== environment ===
+Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 20:27:05) [Clang 21.1.4 ]
+OS: macOS-26.2-arm64-arm-64bit-Mach-O, arch arm64
+Mode: threads
+gil_enabled: False
+workers: 8  duration_ms: 5000  id_space: 10000000
+===================
+
+=== result ===
+wall_s: 5.149611
+attempts: 3486328  inserts: 2942798  dup_rate_pct: 15.59
+ops_per_s: 677008.01
+inserts_per_s: 571460.23
+avg_lock_wait_ns: 9658.5
+==============
+
+➜  python-free-threading-vs-multiprocessing-benchmarks git:(main) ✗ uv run --python 3.14+gil scenario2_shared_unique_set.py --mode processes
+=== environment ===
+Python (cpython): 3.14.2 (main, Dec  9 2025, 19:29:30) [Clang 21.1.4 ]
+OS: macOS-26.2-arm64-arm-64bit-Mach-O, arch arm64
+Mode: processes
+mp_start_method: spawn
+gil_enabled: True
+workers: 8  duration_ms: 5000  id_space: 10000000
+===================
+
+=== result ===
+wall_s: 5.061873
+attempts: 90773  inserts: 90352  dup_rate_pct: 0.46
+ops_per_s: 17932.69
+inserts_per_s: 17849.52
+avg_lock_wait_ns: 388786.9
+==============
+
+➜  python-free-threading-vs-multiprocessing-benchmarks git:(main) ✗ uv run --python 3.14+gil scenario3_sharded_writer.py --writers 8
+=== environment ===
+Python (cpython): 3.14.2 (main, Dec  9 2025, 19:29:30) [Clang 21.1.4 ]
+OS: macOS-26.2-arm64-arm-64bit-Mach-O, arch arm64
+mp_start_method: spawn
+gil_enabled: True
+workers: 8  writers: 8  duration_ms: 5000  id_space: 10000000
+===================
+
+=== result ===
+wall_s: 5.100178
+attempts: 749736  inserts: 722388  dup_rate_pct: 3.65
+ops_per_s: 147001.93
+inserts_per_s: 141639.76
+avg_queue_put_ns: 15082
+avg_ack_wait_ns: 36583
+==============
