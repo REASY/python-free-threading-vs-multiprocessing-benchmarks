@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Scenario 3: Single-writer process for unique set (processes only)
+Scenario 3: Single-writer (or sharded-writer) process for unique set (processes only)
 
 Workload:
-- N producer processes generate IDs and send them to one writer process.
-- The writer owns the set and performs check+insert serially (no lock).
+- N producer processes generate IDs and send them to one writer process (or shard).
+- Each writer owns its set and performs check+insert serially (no lock).
+- Sharding uses `uid % writers` so the same ID always goes to the same writer.
 - Producers block for a per-item ACK (duplicate vs insert) from the writer.
 - This removes Manager-proxy + shared-lock overhead from Scenario 2, but adds IPC round trips.
 
@@ -12,9 +13,12 @@ Outputs:
 - ops/sec (attempted check+insert)
 - inserts/sec (new unique IDs)
 - dup_rate (% attempts that were duplicates)
+- avg queue put latency (ns)
+- avg ACK wait latency (ns)
 
 Run examples:
-  uv run --python 3.14+gil python scenario3_single_writer.py
+  uv run --python 3.14+gil python scenario3_sharded_writer.py
+  uv run --python 3.14+gil python scenario3_sharded_writer.py --writers 4
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ class BenchConfig:
     warmup: int
     duration_ms: int
     id_space: int
+    writers: int
     mp_start: Optional[str]  # spawn | forkserver | fork | None
 
 
@@ -47,6 +52,8 @@ class BenchConfig:
 class WorkerStats:
     attempts: int
     inserts: int
+    queue_put_ns: int
+    ack_wait_ns: int
 
 
 @dataclass(frozen=True)
@@ -59,10 +66,12 @@ def _proc_producer_single_writer(
     worker_index: int,
     id_space: int,
     duration_s: float,
+    writer_count: int,
     start_evt: synchronize.Event,
-    queue: queues.SimpleQueue,
-    ack_conn: Connection,
+    writer_queues: List[queues.SimpleQueue],
+    ack_queue: queues.SimpleQueue,
     ready_conn: Connection,
+    stats_conn: Connection,
 ) -> None:
     try:
         ready_conn.send(os.getpid())
@@ -76,20 +85,38 @@ def _proc_producer_single_writer(
     start_evt.wait()
     end = time.perf_counter() + duration_s
 
+    attempts = 0
+    queue_put_ns = 0
+    ack_wait_ns = 0
+
     while time.perf_counter() < end:
         uid = int(rng.next_u64() % id_space)
-        queue.put((worker_index, uid))
-        ack_conn.recv()
+        shard = uid % writer_count
+        t0 = time.perf_counter_ns()
+        writer_queues[shard].put((worker_index, uid))
+        t1 = time.perf_counter_ns()
+        queue_put_ns += t1 - t0
 
-    queue.put((worker_index, None))
-    ack_conn.close()
+        t2 = time.perf_counter_ns()
+        ack_queue.get()
+        t3 = time.perf_counter_ns()
+        ack_wait_ns += t3 - t2
+        attempts += 1
+
+    for q in writer_queues:
+        q.put((worker_index, None))
+    try:
+        stats_conn.send((attempts, queue_put_ns, ack_wait_ns))
+    finally:
+        stats_conn.close()
 
 
 def _proc_writer_single_writer(
+    shard_index: int,
     worker_count: int,
     start_evt: synchronize.Event,
     queue: queues.SimpleQueue,
-    ack_conns: List[Connection],
+    ack_queues: List[queues.SimpleQueue],
     ready_conn: Connection,
     stats_conn: Connection,
 ) -> None:
@@ -98,6 +125,7 @@ def _proc_writer_single_writer(
     finally:
         ready_conn.close()
 
+    del shard_index
     start_evt.wait()
 
     shared_set: set[int] = set()
@@ -114,18 +142,13 @@ def _proc_writer_single_writer(
         if uid not in shared_set:
             shared_set.add(uid)
             inserts += 1
-            ack_conns[worker_index].send(True)
+            ack_queues[worker_index].put(True)
         else:
-            ack_conns[worker_index].send(False)
+            ack_queues[worker_index].put(False)
 
     try:
         stats_conn.send((attempts, inserts))
     finally:
-        for c in ack_conns:
-            try:
-                c.close()
-            except Exception:
-                pass
         stats_conn.close()
 
 
@@ -133,16 +156,18 @@ class SingleWriterProcessWorkload(WorkloadStrategy):
     def __init__(self, backend: ProcessBackend):
         self.backend = backend
         self.ctx = backend.ctx
-        self.queue: Optional[queues.SimpleQueue] = None
+        self.writer_queues: List[queues.SimpleQueue] = []
+        self.ack_queues: List[queues.SimpleQueue] = []
         self.start_evt: Optional[synchronize.Event] = None
         self.ready_conns: List[Connection] = []
-        self.ack_conns: List[Connection] = []
-        self.producer_acks: List[Connection] = []
-        self.writer_ready: Optional[Connection] = None
-        self.writer_stats: Optional[Connection] = None
-        self.writer_worker: Optional[Any] = None
+        self.writer_ready: List[Connection] = []
+        self.writer_stats: List[Connection] = []
+        self.writer_workers: List[Any] = []
+        self.producer_stats: List[Connection] = []
+        self.producer_stats_child: List[Connection] = []
         self.duration_s = 0.0
         self.worker_count = 0
+        self.writer_count = 0
 
     def get_target(self, cfg: BenchConfig):
         return _proc_producer_single_writer
@@ -150,93 +175,107 @@ class SingleWriterProcessWorkload(WorkloadStrategy):
     def get_args(self, cfg: BenchConfig, worker_index: int):
         r_parent, r_child = self.ctx.Pipe(duplex=False)
         self.ready_conns.append(r_parent)
-        ack_conn = self.producer_acks[worker_index]
+        stats_conn = self.producer_stats_child[worker_index]
         return (
             worker_index,
             cfg.id_space,
             self.duration_s,
+            self.writer_count,
             self.start_evt,
-            self.queue,
-            ack_conn,
+            self.writer_queues,
+            self.ack_queues[worker_index],
             r_child,
+            stats_conn,
         )
 
     def prepare_iteration(self, cfg: BenchConfig, backend) -> None:
-        self.queue = self.ctx.SimpleQueue()
+        self.writer_queues = []
+        self.ack_queues = []
         self.start_evt = self.ctx.Event()
         self.ready_conns = []
         self.duration_s = cfg.duration_ms / 1000.0
         self.worker_count = cfg.workers
-        self.ack_conns = []
-        self.producer_acks = []
+        self.writer_count = cfg.writers
+        self.writer_ready = []
+        self.writer_stats = []
+        self.writer_workers = []
+        self.producer_stats = []
+        self.producer_stats_child = []
 
         for _ in range(cfg.workers):
-            writer_conn, producer_conn = self.ctx.Pipe(duplex=True)
-            self.ack_conns.append(writer_conn)
-            self.producer_acks.append(producer_conn)
+            self.ack_queues.append(self.ctx.SimpleQueue())
+            stats_parent, stats_child = self.ctx.Pipe(duplex=False)
+            self.producer_stats.append(stats_parent)
+            self.producer_stats_child.append(stats_child)
 
-        wr_parent, wr_child = self.ctx.Pipe(duplex=False)
-        ws_parent, ws_child = self.ctx.Pipe(duplex=False)
-        self.writer_ready = wr_parent
-        self.writer_stats = ws_parent
-        self.writer_worker = self.backend.create_worker(
-            _proc_writer_single_writer,
-            (
-                cfg.workers,
-                self.start_evt,
-                self.queue,
-                self.ack_conns,
-                wr_child,
-                ws_child,
-            ),
-        )
+        for shard in range(cfg.writers):
+            self.writer_queues.append(self.ctx.SimpleQueue())
+            wr_parent, wr_child = self.ctx.Pipe(duplex=False)
+            ws_parent, ws_child = self.ctx.Pipe(duplex=False)
+            self.writer_ready.append(wr_parent)
+            self.writer_stats.append(ws_parent)
+            worker = self.backend.create_worker(
+                _proc_writer_single_writer,
+                (
+                    shard,
+                    cfg.workers,
+                    self.start_evt,
+                    self.writer_queues[shard],
+                    self.ack_queues,
+                    wr_child,
+                    ws_child,
+                ),
+            )
+            self.writer_workers.append(worker)
 
     def start_iteration(self) -> None:
-        assert self.writer_worker is not None
-        self.writer_worker.start()
+        for w in self.writer_workers:
+            w.start()
 
         for c in self.ready_conns:
             c.recv()
             c.close()
 
-        for c in self.producer_acks:
+        for c in self.writer_ready:
+            c.recv()
             c.close()
-
-        if self.writer_ready is not None:
-            self.writer_ready.recv()
-            self.writer_ready.close()
-
-        for c in self.ack_conns:
-            try:
-                c.close()
-            except Exception:
-                pass
 
         start_evt = self.start_evt
         assert start_evt is not None
         start_evt.set()
 
     def collect_iteration(self):
-        if self.writer_stats is None:
-            raise RuntimeError("Writer stats connection missing")
-        attempts, inserts = self.writer_stats.recv()
-        self.writer_stats.close()
+        attempts = 0
+        inserts = 0
+        for c in self.writer_stats:
+            shard_attempts, shard_inserts = c.recv()
+            c.close()
+            attempts += int(shard_attempts)
+            inserts += int(shard_inserts)
 
-        assert self.writer_worker is not None
-        self.writer_worker.join()
-        exitcode = getattr(self.writer_worker, "exitcode", None)
-        if exitcode is not None and exitcode != 0:
-            raise RuntimeError(f"Writer process exited with {exitcode}")
+        queue_put_ns = 0
+        ack_wait_ns = 0
+        for c in self.producer_stats:
+            _prod_attempts, prod_put_ns, prod_ack_ns = c.recv()
+            c.close()
+            queue_put_ns += int(prod_put_ns)
+            ack_wait_ns += int(prod_ack_ns)
 
-        return WorkerStats(int(attempts), int(inserts))
+        for w in self.writer_workers:
+            w.join()
+            exitcode = getattr(w, "exitcode", None)
+            if exitcode is not None and exitcode != 0:
+                raise RuntimeError(f"Writer process exited with {exitcode}")
+
+        return WorkerStats(attempts, inserts, queue_put_ns, ack_wait_ns)
 
     def get_extra_pids(self) -> List[int]:
-        if self.writer_worker is None:
-            return []
-        pid = getattr(self.writer_worker, "pid", None)
-        if pid is None:
-            return []
-        return [int(pid)]
+        pids: List[int] = []
+        for w in self.writer_workers:
+            pid = getattr(w, "pid", None)
+            if pid is not None:
+                pids.append(int(pid))
+        return pids
 
 
 class Scenario3SingleWriter:
@@ -282,7 +321,9 @@ def _print_env(cfg: BenchConfig) -> None:
     if gil is not None:
         print(f"gil_enabled: {gil}")
     print(
-        f"workers: {cfg.workers}  duration_ms: {cfg.duration_ms}  id_space: {cfg.id_space}"
+        "workers: "
+        f"{cfg.workers}  writers: {cfg.writers}  duration_ms: {cfg.duration_ms}  "
+        f"id_space: {cfg.id_space}"
     )
     print("===================")
 
@@ -294,12 +335,16 @@ def _report(res: BenchResult, cfg: BenchConfig) -> None:
     ops_s = s.attempts / wall
     inserts_s = s.inserts / wall
     dup_rate = 0.0 if s.attempts == 0 else (1.0 - (s.inserts / s.attempts)) * 100.0
+    avg_put_ns = s.queue_put_ns / max(s.attempts, 1)
+    avg_ack_ns = s.ack_wait_ns / max(s.attempts, 1)
 
     print("\n=== result ===")
     print(f"wall_s: {res.wall_s:.6f}")
     print(f"attempts: {s.attempts}  inserts: {s.inserts}  dup_rate_pct: {dup_rate:.2f}")
     print(f"ops_per_s: {ops_s:.2f}")
     print(f"inserts_per_s: {inserts_s:.2f}")
+    print(f"avg_queue_put_ns: {avg_put_ns:.0f}")
+    print(f"avg_ack_wait_ns: {avg_ack_ns:.0f}")
     print("==============\n")
 
 
@@ -313,6 +358,7 @@ def parse_args() -> BenchConfig:
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--duration-ms", type=int, default=None)
     ap.add_argument("--id-space", type=int, default=None)
+    ap.add_argument("--writers", type=int, default=None)
     ap.add_argument("--mp-start", choices=["spawn", "forkserver", "fork"], default=None)
 
     ns = ap.parse_args()
@@ -325,9 +371,13 @@ def parse_args() -> BenchConfig:
         ns.duration_ms = 5000
     if ns.id_space is None:
         ns.id_space = 10_000_000
+    if ns.writers is None:
+        ns.writers = 1
 
     if ns.workers <= 0:
         raise SystemExit("--workers must be > 0")
+    if ns.writers <= 0:
+        raise SystemExit("--writers must be > 0")
     if ns.duration_ms <= 0:
         raise SystemExit("--duration-ms must be > 0")
     if ns.id_space <= 0:
@@ -338,6 +388,7 @@ def parse_args() -> BenchConfig:
         warmup=int(ns.warmup),
         duration_ms=int(ns.duration_ms),
         id_space=int(ns.id_space),
+        writers=int(ns.writers),
         mp_start=ns.mp_start,
     )
 
