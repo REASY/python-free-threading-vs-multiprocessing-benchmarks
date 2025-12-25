@@ -152,7 +152,7 @@ Same knobs everywhere:
 | processes              |        spawn |        32.851 |              17.93× |
 
 Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny jobs, **`fork` wins**, `forkserver` is okay, and `spawn` is the "boot a fresh interpreter" tax. It’s the safest and most portable method… and also the one that makes tiny tasks feel like trying to start Kubernetes for every HTTP request. On Linux/macOS, `fork` benefits from copy‑on‑write;
-> Crucial Note on fork: Forking after threads is unsafe: the child inherits the **locked state** but **not the threads** that would unlock it. (See CPython issue: https://github.com/python/cpython/issues/84559)
+> Crucial Note on fork: Forking after threads is unsafe and could lead to deadlocks: the child inherits the **locked state** but **not the threads** that would unlock it. (See CPython issue: https://github.com/python/cpython/issues/84559)
 
 #### Memory profile (avg during the 1s hold)
 
@@ -177,7 +177,7 @@ Read that like this:
 
 #### Overhead profile (avg time per iteration)
 
-Windows is effectively **spawn-only**, and you can see it in the bill.
+Windows is effectively **spawn-only**, and you can see it in the bill (it calls [CreateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa), which is a heavyweight operation)
 
 | Mode                   | Start method | avg iter (ms) | relative to threads |
 |------------------------|-------------:|--------------:|--------------------:|
@@ -393,12 +393,12 @@ We’ve removed the manager proxy and the shared lock; the only shared cost is I
 
 **8 producers, varying writer shards:**
 
-| writers | ops/s      | inserts/s  | dup_rate_pct | avg_queue_put_ns | avg_ack_wait_ns |
-|---------|-----------:|-----------:|-------------:|-----------------:|----------------:|
-| 1       | 329,334.26 | 303,417.59 |         7.87 |            2,075 |          21,466 |
-| 2       | 556,337.00 | 485,052.27 |        12.81 |            2,406 |          11,339 |
-| 4       | 673,558.13 | 571,169.31 |        15.20 |            2,653 |           8,561 |
-| 8       | 711,093.02 | 597,812.42 |        15.93 |            2,781 |           7,775 |
+| writers |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, ns | avg ack_wait, ns |
+|---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
+| 1       | 329,334.26 | 303,417.59 |         7.87 |             2,075 |           21,466 |
+| 2       | 556,337.00 | 485,052.27 |        12.81 |             2,406 |           11,339 |
+| 4       | 673,558.13 | 571,169.31 |        15.20 |             2,653 |            8,561 |
+| 8       | 711,093.02 | 597,812.42 |        15.93 |             2,781 |            7,775 |
 
 Compared to Scenario 2's ~50k ops/s for manager+lock, even the 1‑writer baseline is ~6× faster.  
 Sharding scales it further, and the mean ACK wait drops as writers fan out, but the queue put cost stays flat. That tells you the ceiling is still IPC + scheduling, not the set itself.
