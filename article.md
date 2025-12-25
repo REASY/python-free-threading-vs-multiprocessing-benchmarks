@@ -368,6 +368,41 @@ If you’re in **processes**:
 
 Scenario 2 is the cautionary tale: multiprocessing gives parallel CPU, but a shared mutable state can delete it.
 
+## Scenario 3: Sharded writers (multiprocessing without shared state)
+
+Scenario 2 used a `Manager().dict()` and a shared lock, which turns every "check + insert" into IPC.  
+Scenario 3 replaces that with **M writer processes**, each owning a shard of the set, and routes items by hash so the same key always lands on the same writer.
+
+### Workload idea
+
+- **M writer processes** each hold a local `set`.
+- **N producers** generate IDs and send `(worker_id, uid)` to a shard queue: `shard = uid % writers`.
+- The writer does `uid in set` and, if new, `set.add(uid)`, then sends an ACK back to the producer.
+- Each producer blocks on its ACK before sending the next ID, so insert/duplicate is explicit and counts are exact.
+
+Each writer is still single‑threaded, but now **different keys can be handled in parallel**.  
+We’ve removed the manager proxy and the shared lock; the only shared cost is IPC + ACK per item.
+
+### How to run
+
+`uv run --python 3.14+gil python scenario3_sharded_writer.py --writers N`
+
+![scenario3_example.png](scenario3_example.png)
+
+### Results (Ubuntu 25.10 / Linux 6.17 / x86_64)
+
+**8 producers, varying writer shards:**
+
+| writers | ops/s      | inserts/s  | dup_rate_pct | avg_queue_put_ns | avg_ack_wait_ns |
+|---------|-----------:|-----------:|-------------:|-----------------:|----------------:|
+| 1       | 329,334.26 | 303,417.59 |         7.87 |            2,075 |          21,466 |
+| 2       | 556,337.00 | 485,052.27 |        12.81 |            2,406 |          11,339 |
+| 4       | 673,558.13 | 571,169.31 |        15.20 |            2,653 |           8,561 |
+| 8       | 711,093.02 | 597,812.42 |        15.93 |            2,781 |           7,775 |
+
+Compared to Scenario 2's ~50k ops/s for manager+lock, even the 1‑writer baseline is ~6× faster.  
+Sharding scales it further, and the mean ACK wait drops as writers fan out, but the queue put cost stays flat. That tells you the ceiling is still IPC + scheduling, not the set itself.
+
 ## References
 - [Python support for free threading](https://docs.python.org/3/howto/free-threading-python.html)
 - [multiprocessing — Process-based parallelism](https://docs.python.org/3/library/multiprocessing.html)
