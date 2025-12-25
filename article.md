@@ -96,7 +96,9 @@ There are two profiles:
 - Run **1000 iterations**
 - Goal: **isolate startup + teardown overhead**
 
-> Pool caveat: this is worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead shifts to dispatch + IPC/serialization. On Windows/macOS, worker creation is still `spawn`, even for pools. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
+> Pool warning: this is the worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead shifts to dispatch + IPC/serialization. 
+> On Windows/macOS, worker creation is still `spawn`, even for pools. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. 
+> Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
 
 How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
 
@@ -327,7 +329,7 @@ That’s not just contention — it’s "you made the critical section slow, so 
 
 ### "But the duplicate rate is different!" — yep, and here’s why
 
-Threads did **~4.5 million inserts** into a **10 million** ID space in 5 seconds — we’re at ~45% occupancy, so duplicates start showing up a lot.
+Threads did **~4.5 million inserts** into a **10 million** ID space in 5.5 seconds (`wall_s`) — we’re at ~45% occupancy, so duplicates start showing up a lot.
 
 Processes only managed ~250k inserts — ~2.5% occupancy — so of course the duplicate rate stays low.
 
@@ -352,7 +354,7 @@ That’s why it collapses to ~50k ops/s.
 
 If you’re in **threads** (free-threading build):
 
-- Shared structures + a lock can be totally fine… until the lock becomes the program.
+- Shared structures and a lock can be totally fine… until the lock becomes the program.
 - `avg_lock_wait_ns` is your "are we turning into a single lane?" early warning signal.
 
 If you’re in **processes**:
