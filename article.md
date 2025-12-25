@@ -248,6 +248,8 @@ Why Ubuntu only? Because based on Scenario 1’s overhead numbers, Linux was the
 
 So if there’s a platform where you should *expect* concurrency overheads to be the least embarrassing, it’s Linux.
 
+That said: I also ran Scenarios 2 and 3 on macOS and Windows as a sanity check. The *shape* is the same, the absolute numbers are lower (see the cross-platform section after Scenario 3).
+
 Scenario 1 was the entry fee: *startup tax* and *RAM tax*.
 
 Scenario 2 is where things get spicy because it models a pattern people accidentally build all the time:
@@ -406,6 +408,32 @@ We’ve removed the manager proxy and the shared lock; the only shared cost is I
 
 Compared to Scenario 2's ~50k ops/s for manager+lock, even the 1‑writer baseline is ~6× faster.  
 Sharding scales it further, and the mean ACK wait drops as writers fan out, but the queue put cost stays flat. That tells you the ceiling is still IPC + scheduling, not the set itself.
+
+## Cross-platform sanity check (macOS + Windows 11)
+
+I focused the deep dive on Linux, but I also ran the same workloads on the spawn-only platforms (macOS/Windows). Linux is included below as a reference point.
+
+### Scenario 2 (shared set + lock, 8 workers, 5s)
+
+`avg lock wait` is the mean per-op time spent waiting to acquire the lock.
+
+| OS          | threads ops/s | processes ops/s (`spawn` + `Manager` + lock) | relative to threads | avg lock wait (threads) | avg lock wait (processes) |
+|-------------|--------------:|---------------------------------------------:|--------------------:|-------------------------:|--------------------------:|
+| Linux       |     1,098,066 |                                       50,333 |               21.8× |                  5.32 µs |                 138.00 µs |
+| macOS       |       677,008 |                                       17,932 |               37.8× |                  9.66 µs |                 388.79 µs |
+| Windows 11  |       432,936 |                                       28,102 |               15.4× |                 14.46 µs |                 245.33 µs |
+
+For Linux, the processes row uses `spawn` for apples-to-apples. The start method doesn’t matter much here because the `Manager` proxy dominates the cost anyway.
+
+### Scenario 3 (sharded writers, 8 producers, 8 writers, 5s)
+
+Scenario 3 is process-only and bottlenecked by IPC.
+
+| OS          | mp start |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, ns | avg ack_wait, ns |
+|-------------|:---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
+| Linux       | spawn    | 704,259.92 | 592,303.88 |        15.90 |             2,801 |            7,778 |
+| macOS       | spawn    | 147,001.93 | 141,639.76 |         3.65 |            15,082 |           36,583 |
+| Windows 11  | spawn    | 259,252.28 | 242,797.56 |         6.35 |             8,277 |           20,772 |
 
 ## Final Thoughts
 
