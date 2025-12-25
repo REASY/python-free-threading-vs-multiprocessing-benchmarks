@@ -407,6 +407,18 @@ We’ve removed the manager proxy and the shared lock; the only shared cost is I
 Compared to Scenario 2's ~50k ops/s for manager+lock, even the 1‑writer baseline is ~6× faster.  
 Sharding scales it further, and the mean ACK wait drops as writers fan out, but the queue put cost stays flat. That tells you the ceiling is still IPC + scheduling, not the set itself.
 
+## Final Thoughts
+
+We started by asking if you should swap processes for free-threaded threads.
+
+The data says **yes, and it might let you write simpler code.**
+
+1.  **For fine-grained tasks**, free-threading is a massive win. You save the "boot a new Python" tax of `spawn` and the memory duplication of processes.
+2.  **Threads are just faster.** Even a "naive" shared lock in free-threading (**~1.1M ops/s**) beat the optimized sharded architecture in processes (**~711k ops/s**).
+3.  **Processes require complexity.** To get decent performance with processes, we had to invent a sharded writer system (Scenario 3) just to escape the `Manager` bottleneck. With threads, we just used a `Lock`, and it won.
+
+Free-threading gives you a lighter, faster primitive. It turns "distributed systems problems" back into "local programming problems."
+
 ## References
 - [Python support for free threading](https://docs.python.org/3/howto/free-threading-python.html)
 - [multiprocessing — Process-based parallelism](https://docs.python.org/3/library/multiprocessing.html)
