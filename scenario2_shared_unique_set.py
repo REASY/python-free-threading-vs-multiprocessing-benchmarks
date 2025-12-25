@@ -23,10 +23,10 @@ Outputs:
 
 Run examples:
   # Free-threaded build (threads)
-  uv run --with psutil --python 3.14t python scenario2_shared_unique_set.py --mode threads
+  uv run --python 3.14t python scenario2_shared_unique_set.py --mode threads
 
   # Regular build (processes)
-  uv run --with psutil --python 3.14+gil scenario2_shared_unique_set.py --mode processes
+  uv run --python 3.14+gil scenario2_shared_unique_set.py --mode processes
 
 """
 
@@ -38,7 +38,7 @@ import platform
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from benchmark_engine import (
     BenchmarkRunner,
@@ -51,28 +51,7 @@ from multiprocessing import synchronize
 from multiprocessing.connection import Connection
 from multiprocessing.managers import DictProxy, SyncManager
 
-
-# ----------------------------
-# Deterministic per-worker PRNG
-# ----------------------------
-
-
-class SplitMix64:
-    """
-    Tiny fast PRNG. Deterministic, cheap, good enough for benchmarking.
-    """
-
-    __slots__ = ("state",)
-
-    def __init__(self, seed: int):
-        self.state = seed & 0xFFFFFFFFFFFFFFFF
-
-    def next_u64(self) -> int:
-        self.state = (self.state + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
-        z = self.state
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9 & 0xFFFFFFFFFFFFFFFF
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EB & 0xFFFFFFFFFFFFFFFF
-        return z ^ (z >> 31)
+from common import SplitMix64
 
 
 # ----------------------------
@@ -197,8 +176,12 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
         self.per_worker = [WorkerStats(0, 0, 0) for _ in range(cfg.workers)]
 
     def start_iteration(self) -> None:
-        self.barrier.wait()
-        self.start_evt.set()
+        barrier = self.barrier
+        start_evt = self.start_evt
+        assert barrier is not None
+        assert start_evt is not None
+        barrier.wait()
+        start_evt.set()
 
     def collect_iteration(self):
         return _sum_stats(self.per_worker)
@@ -213,8 +196,15 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
             & 0xFFFFFFFFFFFFFFFF
         )
 
-        self.barrier.wait()
-        self.start_evt.wait()
+        barrier = self.barrier
+        start_evt = self.start_evt
+        lock = self.lock
+        assert barrier is not None
+        assert start_evt is not None
+        assert lock is not None
+
+        barrier.wait()
+        start_evt.wait()
         end = time.perf_counter() + (cfg.duration_ms / 1000.0)
 
         attempts = 0
@@ -225,7 +215,7 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
             uid = int(rng.next_u64() % cfg.id_space)
 
             inner_t0 = time.perf_counter_ns()
-            self.lock.acquire()
+            lock.acquire()
             try:
                 t1 = time.perf_counter_ns()
                 lock_wait_ns += t1 - inner_t0
@@ -234,7 +224,7 @@ class SharedUniqueSetThreadsWorkload(WorkloadStrategy):
                     self.shared_set.add(uid)
                     inserts += 1
             finally:
-                self.lock.release()
+                lock.release()
 
             attempts += 1
 
@@ -285,7 +275,9 @@ class SharedUniqueSetProcessWorkload(WorkloadStrategy):
         for c in self.ready_conns:
             c.recv()
             c.close()
-        self.start_evt.set()
+        start_evt = self.start_evt
+        assert start_evt is not None
+        start_evt.set()
 
     def collect_iteration(self):
         per_worker_stats: List[WorkerStats] = []
@@ -337,7 +329,7 @@ class Scenario2SharedUniqueSet:
         stats = run_res.payloads[0]
         if stats is None:
             raise RuntimeError("Missing worker stats from benchmark run")
-        return BenchResult(wall_s=run_res.wall_seconds, stats=stats)
+        return BenchResult(wall_s=run_res.wall_seconds, stats=cast(WorkerStats, stats))
 
 
 def _sum_stats(items: List[WorkerStats]) -> WorkerStats:

@@ -137,7 +137,9 @@ class MemoryWorkload(WorkloadStrategy):
     def get_args(self, cfg: BenchConfig, worker_index: int) -> Tuple:
         parent_conn, child_conn = self.backend.Pipe(duplex=False)
         self.ready_conns.append(parent_conn)
-        return (cfg.work_iters, cfg.hold_ms / 1000.0, self.start_evt, child_conn)
+        start_evt = self.start_evt
+        assert start_evt is not None
+        return (cfg.work_iters, cfg.hold_ms / 1000.0, start_evt, child_conn)
 
     def prepare_iteration(self, cfg: BenchConfig, backend: Backend) -> None:
         gc.collect()
@@ -149,7 +151,9 @@ class MemoryWorkload(WorkloadStrategy):
         for c in self.ready_conns:
             c.recv()
             c.close()
-        self.start_evt.set()
+        start_evt = self.start_evt
+        assert start_evt is not None
+        start_evt.set()
 
 
 # ----------------------------

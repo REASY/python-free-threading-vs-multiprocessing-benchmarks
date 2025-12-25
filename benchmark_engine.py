@@ -97,9 +97,12 @@ class ThreadBackend(Backend):
 class ProcessBackend(Backend):
     def __init__(self, start_method: Optional[str]):
         import multiprocessing as mp
+        from multiprocessing.context import DefaultContext
 
         mp.freeze_support()
-        self.ctx = mp.get_context(start_method) if start_method else mp.get_context()
+        self.ctx: DefaultContext = (
+            mp.get_context(start_method) if start_method else mp.get_context()
+        )
 
     def create_worker(self, target: Callable, args: Tuple) -> Worker:
         return self.ctx.Process(target=target, args=args)
