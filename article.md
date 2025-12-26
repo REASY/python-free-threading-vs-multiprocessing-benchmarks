@@ -442,11 +442,11 @@ I focused the deep dive on Linux, but I also ran the same workloads on the spawn
 
 `avg lock wait` is the mean per-op time spent waiting to acquire the lock.
 
-| OS         | threads ops/s | processes ops/s (`spawn` + `Manager` + lock) | relative to threads | avg lock wait (threads) | avg lock wait (processes) |
-|------------|--------------:|---------------------------------------------:|--------------------:|------------------------:|--------------------------:|
-| Linux      |     1,098,066 |                                       50,333 |               21.8× |                 5.32 µs |                 138.00 µs |
-| macOS      |       677,008 |                                       17,932 |               37.8× |                 9.66 µs |                 388.79 µs |
-| Windows 11 |       432,936 |                                       28,102 |               15.4× |                14.46 µs |                 245.33 µs |
+ | OS         | threads ops/s | processes ops/s (`spawn` + `Manager` + lock) | relative to threads | avg lock wait, threads, µs | avg lock wait, processes, µs |
+|------------|--------------:|---------------------------------------------:|--------------------:|---------------------------:|-----------------------------:|
+| Linux      |     1,098,066 |                                       50,333 |               21.8× |                       5.32 |                       138.00 |
+| macOS      |       677,008 |                                       17,932 |               37.8× |                       9.66 |                       388.79 |
+| Windows 11 |       432,936 |                                       28,102 |               15.4× |                      14.46 |                       245.33 |
 
 For Linux, the processes row uses `spawn` for apples-to-apples. The start method doesn’t matter much here because the `Manager` proxy dominates the cost anyway.
 
