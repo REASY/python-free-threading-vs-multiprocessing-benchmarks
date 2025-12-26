@@ -100,7 +100,7 @@ There are two profiles:
 > On Windows/macOS, worker creation is still `spawn`, even for pools. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. 
 > Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
 
-How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
+How to run the benchmark
 
 | Mode                   | Start method |                                                                                                    Command |
 |------------------------|-------------:|-----------------------------------------------------------------------------------------------------------:|
@@ -122,7 +122,7 @@ How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-
 
 > **Note:** RSS/USS/PSS availability varies by OS, and frequent PSS sampling (especially on Linux) introduces significant overhead. Treat this profile as a **footprint probe**, not a timing benchmark.
 
-How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
+How to run the benchmark
 
 | Mode                   | Start method |                                                                                                  Command |
 |------------------------|-------------:|---------------------------------------------------------------------------------------------------------:|
@@ -272,7 +272,7 @@ IDs are mapped into a fixed space (`id_space = 10,000,000`) so duplicates natura
 
 ### Implementation details
 
-The benchmark is implemented in `scenario2_shared_unique_set.py`:
+The benchmark is implemented in [scenario2_shared_unique_set.py](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/blob/main/scenario2_shared_unique_set.py):
 
 - **Threads mode (free‑threading build):**
   - `shared_set = set()` in the same process
@@ -293,13 +293,13 @@ Cost model (why the gap is so large):
 
 > IPC transport differs by OS; the cost profile is similar.
 
-The lock `lock` isn’t protecting dict internals; it’s protecting the **check-then-insert** as one atomic operation: we do two Manager proxy calls (uid in dict, dict[uid]=1). Those are IPC + pickling + context switches. So the critical section becomes expensive, and everyone queues behind it. **That** is why the latency numbers you are about to see look the way they do — we added a **mini client/server system** in the hottest part of the loop.
+The lock isn’t protecting set/dict internals; it’s protecting the **check-then-insert** as one atomic operation: we do two Manager proxy calls (uid in dict, dict[uid]=1). Those are IPC + pickling + context switches. So the critical section becomes expensive, and everyone queues behind it. **That** is why the latency numbers you are about to see look the way they do — we added a **mini client/server system** in the hottest part of the loop.
 
 > Amdahl's law: If every worker must pass through one narrow critical section, you’ve capped throughput — the only question is how expensive each pass is.
 
 So Scenario 2 is really benchmarking: **lock contention + IPC + proxy overhead**, not "processes are slow".
 
-### How to run the benchmark, commit [7eb0204](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/commit/7eb020478492043999a4b86a48a115a07c0adadb):
+### How to run the benchmark
 
 | Mode                   | Start method |                                                                                          Command |
 |------------------------|-------------:|-------------------------------------------------------------------------------------------------:|
