@@ -454,11 +454,11 @@ For Linux, the processes row uses `spawn` for apples-to-apples. The start method
 
 Scenario 3 is process-only and bottlenecked by IPC.
 
-| OS         | mp start |      ops/s |  inserts/s | dup_rate_pct | avg queue_put, µs | avg ack_wait, µs |
-|------------|:---------|-----------:|-----------:|-------------:|------------------:|-----------------:|
-| Linux      | spawn    | 704,259.92 | 592,303.88 |        15.90 |              2.80 |             7.78 |
-| macOS      | spawn    | 147,001.93 | 141,639.76 |         3.65 |             15.08 |            36.58 |
-| Windows 11 | spawn    | 259,252.28 | 242,797.56 |         6.35 |              8.28 |            20.77 |
+| OS         | mp start |      ops/s |  inserts/s | dup_rate, % | avg queue_put, µs | avg ack_wait, µs |
+|------------|:---------|-----------:|-----------:|------------:|------------------:|-----------------:|
+| Linux      | spawn    | 704,259.92 | 592,303.88 |       15.90 |              2.80 |             7.78 |
+| macOS      | spawn    | 147,001.93 | 141,639.76 |        3.65 |             15.08 |            36.58 |
+| Windows 11 | spawn    | 259,252.28 | 242,797.56 |        6.35 |              8.28 |            20.77 |
 
 ## Final Thoughts
 
