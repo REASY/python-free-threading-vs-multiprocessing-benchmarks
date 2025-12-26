@@ -322,11 +322,11 @@ So Scenario 2 is really benchmarking: **lock contention + IPC + proxy overhead**
 
 **Processes (8 workers):** the start method basically doesn’t matter here.
 
-| mp_start   |  ops/s | inserts/s | avg lock wait | relative to threads |
-|------------|-------:|----------:|--------------:|--------------------:|
-| forkserver | 51,920 |    51,235 |      134.5 µs |        21.0× slower |
-| fork       | 51,585 |    50,921 |      135.5 µs |        21.2× slower |
-| spawn      | 50,333 |    49,687 |      138.0 µs |        21.6× slower |
+| Start method |  ops/s | inserts/s | avg lock wait | relative to threads |
+|--------------|-------:|----------:|--------------:|--------------------:|
+| forkserver   | 51,920 |    51,235 |      134.5 µs |        21.0× slower |
+| fork         | 51,585 |    50,921 |      135.5 µs |        21.2× slower |
+| spawn        | 50,333 |    49,687 |      138.0 µs |        21.6× slower |
 
 
 Also notice the lock wait ratio: in processes mode the "wait to acquire the lock" is about **25.4×** higher (≈135.5 µs vs 5.32 µs).  
@@ -454,11 +454,11 @@ For Linux, the processes row uses `spawn` for apples-to-apples. The start method
 
 Scenario 3 is process-only and bottlenecked by IPC.
 
-| OS         | mp start |      ops/s |  inserts/s | dup_rate, % | avg queue_put, µs | avg ack_wait, µs |
-|------------|:---------|-----------:|-----------:|------------:|------------------:|-----------------:|
-| Linux      | spawn    | 704,259.92 | 592,303.88 |       15.90 |              2.80 |             7.78 |
-| macOS      | spawn    | 147,001.93 | 141,639.76 |        3.65 |             15.08 |            36.58 |
-| Windows 11 | spawn    | 259,252.28 | 242,797.56 |        6.35 |              8.28 |            20.77 |
+| OS         | Start method |      ops/s |  inserts/s | dup_rate, % | avg queue_put, µs | avg ack_wait, µs |
+|------------|:-------------|-----------:|-----------:|------------:|------------------:|-----------------:|
+| Linux      | spawn        | 704,259.92 | 592,303.88 |       15.90 |              2.80 |             7.78 |
+| macOS      | spawn        | 147,001.93 | 141,639.76 |        3.65 |             15.08 |            36.58 |
+| Windows 11 | spawn        | 259,252.28 | 242,797.56 |        6.35 |              8.28 |            20.77 |
 
 ## Final Thoughts
 
