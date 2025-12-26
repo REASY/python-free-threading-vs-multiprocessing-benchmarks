@@ -97,7 +97,7 @@ There are two profiles:
 - Goal: **isolate startup + teardown overhead**
 
 > Pool warning: this is the worst‑case for processes. A long‑lived pool pays most of this cost once (warmup), then per‑task overhead shifts to dispatch + IPC/serialization. 
-> On Windows/macOS, worker creation is still `spawn`, even for pools. If your design really does short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. 
+> On Windows (and on macOS by default), pool workers are still created via `spawn`. If your design keeps recreating pools or launching short‑lived processes per job (serverless‑ish, CLI fanout, test runners), then yes, this is your life. 
 > Thread pools exist too, but thread create cost is usually low enough that reuse matters less.
 
 How to run the benchmark
@@ -170,8 +170,9 @@ Linux gives you **PSS**, which is the best available approximation for multi-pro
 Read that like this:
 
 - RSS looks massive for processes because it double-counts shared pages.
-- `fork` keeps **USS** small (copy-on-write sharing).
-- `spawn` blows up **USS/PSS** because it’s "fresh interpreter per worker".
+- With `fork`, most memory stays copy‑on‑write shared, so summed **USS** can be surprisingly small (pages become shared and stop counting as “unique”); on Linux, **PSS** is the best footprint proxy.
+- With `spawn`, each worker has its own interpreter heap, so **USS/PSS** rise sharply.
+- CoW sharing is workload‑dependent: once workers start writing into shared pages (allocator arenas, refcounts), those pages get copied and the `fork` advantage shrinks.
 
 ---
 
@@ -241,7 +242,7 @@ But if you’re building a system that lives on tiny tasks… this is the part t
 
 ## Scenario 2: Shared mutable state (aka: how to delete your parallelism)
 
-Why Ubuntu only? Because based on Scenario 1’s overhead numbers, Linux was the fastest of the three platforms I tested:
+Why Ubuntu only? Because in Scenario 1, Linux had the lowest overhead on my test machines (Linux/Windows share the same 9950X box; macOS is a different M3 Max machine):
 
 - threads avg iteration: **1.832 ms** (Linux) vs **2.675 ms** (Windows) vs **3.087 ms** (macOS)
 - processes `spawn` avg iteration: **32.851 ms** (Linux) vs **70.944 ms** (Windows) vs **51.600 ms** (macOS)
@@ -387,6 +388,8 @@ This is not perfectly apples-to-apples (Rust stores `u64` values directly; Pytho
 | **Memory** (Max RSS)        |                        476 MB |           145 MB | **3.3x larger**   |
 | **CPU Usage** (total %)     |                          390% |             238% | **1.6x more CPU** |
 
+> Note: `CPU Usage` here is `/usr/bin/time` percent CPU — 390% means ~3.9 cores worth of CPU on average over the run.
+
 Takeaway: 
 - Throughput is surprisingly close (Rust is only ~1.33× faster). Why? Because contention is the great equalizer: a large fraction of work is waiting to acquire the same OS mutex.
 - Memory is where Python pays the rent: this run peaked at ~3.3× higher RSS (boxed `int` objects in a `set` vs `u64` in a `HashSet`).
@@ -433,7 +436,7 @@ Sharding scales it further, and the mean ACK wait drops as writers fan out, but 
 
 ## Cross-platform sanity check (macOS + Windows 11)
 
-I focused the deep dive on Linux, but I also ran the same workloads on the spawn-only platforms (macOS/Windows). Linux is included below as a reference point.
+I focused the deep dive on Linux, but I also ran the same workloads on the spawn‑default platforms (macOS/Windows). Linux is included below as a reference point.
 
 ### Scenario 2 (shared set + lock, 8 workers, 5s)
 
@@ -463,7 +466,7 @@ We started by asking if you should swap processes for free-threaded threads.
 
 In these benchmarks, for **fine-grained CPU work**, the answer is often **yes** — and it can simplify the implementation.
 
-1. **Fine-grained tasks:** threads avoid the "boot a fresh interpreter" tax of `spawn` (the default reality on Windows, and common on macOS). Pools amortize some cost, but per-process startup can still dominate tiny jobs.
+1. **Fine-grained tasks:** threads avoid the "boot a fresh interpreter" tax of `spawn` (the default reality on Windows, and common on macOS). Pools amortize startup, but tiny tasks can still die on dispatch + IPC/serialization — and if you keep respawning workers, startup dominates again.
 2. **Shared state:** the big cliff isn’t “processes are slow” — it’s that *shared mutable state across processes* usually means IPC + serialization. In Scenario 2, `Manager().dict()` turns a tiny critical section into a client/server round-trip. In Scenario 3, sharding recovers throughput, but every op still pays an IPC + ACK tax.
 3. **Choosing the tool:** use processes when you need isolation (crash containment, separate heaps, differing native libraries) or when tasks are chunky enough that startup/IPC fades into the noise. Use free-threaded threads when you want low overhead and true shared memory, and you can keep lock contention under control.
 
