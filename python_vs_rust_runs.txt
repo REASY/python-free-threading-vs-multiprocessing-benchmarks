@@ -1,0 +1,78 @@
+➜  python-free-threading-vs-multiprocessing-benchmarks git:(main) ✗ uv run --python 3.14t /usr/bin/time -pv python scenario2_shared_unique_set.py --mode threads
+=== environment ===
+Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
+OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
+Mode: threads
+gil_enabled: False
+workers: 8  duration_ms: 5000  id_space: 10000000
+===================
+
+=== result ===
+wall_s: 5.551307
+attempts: 6708900  inserts: 4886231  dup_rate_pct: 27.17
+ops_per_s: 1208526.17
+inserts_per_s: 880194.67
+avg_lock_wait_ns: 4773.5
+==============
+
+        Command being timed: "python scenario2_shared_unique_set.py --mode threads"
+        User time (seconds): 19.41
+        System time (seconds): 24.57
+        Percent of CPU this job got: 393%
+        Elapsed (wall clock) time (h:mm:ss or m:ss): 0:11.18
+        Average shared text size (kbytes): 0
+        Average unshared data size (kbytes): 0
+        Average stack size (kbytes): 0
+        Average total size (kbytes): 0
+        Maximum resident set size (kbytes): 478192
+        Average resident set size (kbytes): 0
+        Major (requiring I/O) page faults: 0
+        Minor (reclaiming a frame) page faults: 197200
+        Voluntary context switches: 13164450
+        Involuntary context switches: 45285
+        Swaps: 0
+        File system inputs: 0
+        File system outputs: 0
+        Socket messages sent: 0
+        Socket messages received: 0
+        Signals delivered: 0
+        Page size (bytes): 4096
+        Exit status: 0
+➜  python-free-threading-vs-multiprocessing-benchmarks git:(main) ✗ rustc -O -C target-cpu=native -C opt-level=3 scenario2_shared_unique_set.rs && /usr/bin/time -pv ./scenario2_shared_unique_set
+=== environment ===
+OS: linux  arch: x86_64
+Mode: threads (Rust)
+workers: 8  warmup: 1  duration_ms: 5000  id_space: 10000000
+===================
+
+=== result ===
+wall_s: 5.000196
+attempts: 7472008  inserts: 5261723  dup_rate_pct: 29.58
+ops_per_s: 1494343.12
+inserts_per_s: 1052303.42
+avg_lock_wait_ns: 4492.8
+==============
+
+        Command being timed: "./scenario2_shared_unique_set"
+        User time (seconds): 13.44
+        System time (seconds): 11.25
+        Percent of CPU this job got: 246%
+        Elapsed (wall clock) time (h:mm:ss or m:ss): 0:10.00
+        Average shared text size (kbytes): 0
+        Average unshared data size (kbytes): 0
+        Average stack size (kbytes): 0
+        Average total size (kbytes): 0
+        Maximum resident set size (kbytes): 146168
+        Average resident set size (kbytes): 0
+        Major (requiring I/O) page faults: 0
+        Minor (reclaiming a frame) page faults: 73289
+        Voluntary context switches: 5414696
+        Involuntary context switches: 5419
+        Swaps: 0
+        File system inputs: 0
+        File system outputs: 0
+        Socket messages sent: 0
+        Socket messages received: 0
+        Signals delivered: 0
+        Page size (bytes): 4096
+        Exit status: 0
