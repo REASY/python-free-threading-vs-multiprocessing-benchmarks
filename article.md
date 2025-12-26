@@ -372,6 +372,28 @@ If you’re in **processes**:
 
 Scenario 2 is the cautionary tale: multiprocessing gives parallel CPU, but a shared mutable state can delete it.
 
+### Bonus: The "Native Speed" Limit (Rust vs Python, same algorithm, threads)
+
+To estimate how much overhead the Python runtime adds in Scenario 2, I rewrote the **threads** version in Rust [scenario2_shared_unique_set.rs](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/blob/main/scenario2_shared_unique_set.rs) using the same SplitMix64 PRNG and the same algorithmic shape: generate ID → lock → check → insert.
+
+This is not perfectly apples-to-apples (Rust stores `u64` values directly; Python stores boxed `int` objects), but it gives a useful lower bound for “how fast can this pattern go if the runtime overhead is minimized”.
+
+**Ubuntu 25.10 / x86_64, 8 workers, duration=5s, id_space=10,000,000** (raw run output in [python_vs_rust_runs.txt](https://github.com/REASY/python-free-threading-vs-multiprocessing-benchmarks/blob/main/python_vs_rust_runs.txt)):
+
+| Metric                      | Python 3.14t (Free-Threading) | Rust (1.92, -O3) | The "Python Tax"  |
+|:----------------------------|------------------------------:|-----------------:|:------------------|
+| **Throughput** (ops/s)      |                     1,138,030 |        1,510,548 | **1.33x slower**  |
+| **Latency** (avg lock wait) |                       5.09 µs |          4.47 µs | **1.14x slower**  |
+| **Memory** (Max RSS)        |                        476 MB |           145 MB | **3.3x larger**   |
+| **CPU Usage** (total %)     |                          390% |             238% | **1.6x more CPU** |
+
+Takeaway: 
+- Throughput is surprisingly close (Rust is only ~1.33× faster). Why? Because contention is the great equalizer: a large fraction of work is waiting to acquire the same OS mutex.
+- Memory is where Python pays the rent: this run peaked at ~3.3× higher RSS (boxed `int` objects in a `set` vs `u64` in a `HashSet`).
+- CPU usage: across the full run (warmup+measured), Python averaged 390% CPU vs Rust 238%. Python burns more CPU-seconds per op (interpreter + object overhead) and triggers significantly more context switching under contention.
+
+Conclusion: for lock-heavy workloads like this, free-threading gets you into the same order of magnitude as native code. You aren’t losing 100× performance anymore; you're paying a 30% tax for the convenience of Python.
+
 ## Scenario 3: Sharded writers (multiprocessing without shared state)
 
 Scenario 2 used a `Manager().dict()` and a shared lock, which turns every "check + insert" into IPC.  
