@@ -160,12 +160,12 @@ Linux takeaway: you get the full menu (`fork`, `forkserver`, `spawn`). For tiny 
 
 Linux gives you **PSS**, which is the best available approximation for multi-process memory on Linux.
 
-| Mode                   | Start method | RSS avg (MB) | USS avg (MB) | PSS avg (MB) |
-|------------------------|-------------:|-------------:|-------------:|-------------:|
-| free‑threading threads |            — |         28.1 |         25.2 |         25.2 |
-| processes              |         fork |        160.0 |         15.5 |         30.5 |
-| processes              |   forkserver |        164.5 |         33.6 |         46.9 |
-| processes              |        spawn |        180.7 |         92.1 |         99.0 |
+| Mode                   | Start method | RSS avg (MiB) | USS avg (MiB) | PSS avg (MiB) |
+|------------------------|-------------:|--------------:|--------------:|--------------:|
+| free‑threading threads |            — |          28.1 |          25.2 |          25.2 |
+| processes              |         fork |         160.0 |          15.5 |          30.5 |
+| processes              |   forkserver |         164.5 |          33.6 |          46.9 |
+| processes              |        spawn |         180.7 |          92.1 |          99.0 |
 
 Read that like this:
 
@@ -191,10 +191,10 @@ Windows is effectively **spawn-only**, and you can see it in the bill (it calls 
 
 Again: no PSS, so **USS** is the closest analogue to "private cost" on Windows.
 
-| Mode                   | Start method | RSS avg (MB) | USS avg (MB) | note                            |
-|------------------------|-------------:|-------------:|-------------:|---------------------------------|
-| free‑threading threads |            — |         33.9 |         19.9 | one process                     |
-| processes              |        spawn |        184.2 |        105.0 | separate interpreter per worker |
+| Mode                   | Start method | RSS avg (MiB) | USS avg (MiB) | note                            |
+|------------------------|-------------:|--------------:|--------------:|---------------------------------|
+| free‑threading threads |            — |          33.9 |          19.9 | one process                     |
+| processes              |        spawn |         184.2 |         105.0 | separate interpreter per worker |
 
 ---
 
@@ -218,12 +218,12 @@ What to notice:
 
 macOS doesn’t report PSS here, so use **USS** as your "how much is truly mine" number.
 
-| Mode                   | Start method | RSS avg (MB) | USS avg (MB) | note                              |
-|------------------------|-------------:|-------------:|-------------:|-----------------------------------|
-| free‑threading threads |            — |         33.9 |         22.5 | one process                       |
-| processes              |         fork |        105.8 |         29.1 | CoW keeps USS low-ish             |
-| processes              |   forkserver |        132.8 |         65.6 | more bootstrap, more unique pages |
-| processes              |        spawn |        249.2 |        153.3 | fresh interpreter per worker      |
+| Mode                   | Start method | RSS avg (MiB) | USS avg (MiB) | note                              |
+|------------------------|-------------:|--------------:|--------------:|-----------------------------------|
+| free‑threading threads |            — |          33.9 |          22.5 | one process                       |
+| processes              |         fork |         105.8 |          29.1 | CoW keeps USS low-ish             |
+| processes              |   forkserver |         132.8 |          65.6 | more bootstrap, more unique pages |
+| processes              |        spawn |         249.2 |         153.3 | fresh interpreter per worker      |
 
 > Note on Threads: You might wonder why RSS (33.9) is higher than USS (22.5) even for a single threaded process. The OS counts shared system libraries (like libc or dyld) in RSS, but they don't count towards USS.
 
@@ -385,7 +385,7 @@ This is not perfectly apples-to-apples (Rust stores `u64` values directly; Pytho
 |:----------------------------|------------------------------:|-----------------:|:------------------|
 | **Throughput** (ops/s)      |                     1,138,030 |        1,510,548 | **1.33x slower**  |
 | **Latency** (avg lock wait) |                       5.09 µs |          4.47 µs | **1.14x slower**  |
-| **Memory** (Max RSS)        |                        476 MB |           145 MB | **3.3x larger**   |
+| **Memory** (Max RSS)        |                       476 MiB |          145 MiB | **3.3x larger**   |
 | **CPU Usage** (total %)     |                          390% |             238% | **1.6x more CPU** |
 
 > Note: `CPU Usage` here is `/usr/bin/time` percent CPU — 390% means ~3.9 cores worth of CPU on average over the run.
