@@ -5,7 +5,7 @@
 // compiled implementation of the same high-level algorithm.
 //
 // Build (recommended):
-//   rustc -O -C target-cpu=native scenario2_shared_unique_set.rs
+//   rustc -O -C target-cpu=native -C opt-level=3 scenario2_shared_unique_set.rs
 //
 // Run:
 //   ./scenario2_shared_unique_set --workers 8 --duration-ms 5000 --id-space 10000000
