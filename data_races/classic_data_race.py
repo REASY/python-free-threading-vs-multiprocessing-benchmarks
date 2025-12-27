@@ -13,12 +13,21 @@ Run examples:
   uv run --python 3.14+gil data_races/classic_data_race.py
 """
 
+import os
 import threading
 import sys
 import platform
+import dis
 
-ITERS = 100000000
+ITERS = 1000000
 THREAD_SWITCHING_INTERVAL = 0.0001
+
+
+def tiny_cpu_work() -> int:
+    x = 1
+    for i in range(10):
+        x += i % 256
+    return x
 
 
 class Point:
@@ -39,9 +48,16 @@ def mover(has_completed_event: threading.Event):
     for _ in range(ITERS):
         # Without synchronization, another thread could read between these assignments
         point.x = 1
+        tiny_cpu_work()
+
         point.y = 2
+        tiny_cpu_work()
+
         point.x = 3
+        tiny_cpu_work()
+
         point.y = 4
+        tiny_cpu_work()
     has_completed_event.set()
 
 
@@ -84,6 +100,10 @@ def main():
     t1.join()
     t2.join()
     print()
+
+    if os.environ.get("PRINT_BYTECODE") == "1":
+        print("=== Python's bytecode of `mover` ===")
+        dis.dis(mover)
 
 
 if __name__ == "__main__":
