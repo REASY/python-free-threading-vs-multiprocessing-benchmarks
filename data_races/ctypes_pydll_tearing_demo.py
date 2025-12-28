@@ -74,19 +74,13 @@ patB = ctypes.create_string_buffer(b"B" * SIZE)
 
 
 def writer(src, start_barrier: threading.Barrier):
-    try:
-        start_barrier.wait()
-    except threading.BrokenBarrierError:
-        return
+    start_barrier.wait()
     for _ in range(ITERS):
         memcpy(shared, src, SIZE)
 
 
 def reader(start_barrier: threading.Barrier):
-    try:
-        start_barrier.wait()
-    except threading.BrokenBarrierError:
-        return
+    start_barrier.wait()
     tearing = 0
     for _ in range(ITERS):
         memcpy(snap, shared, SIZE)  # snapshot
@@ -103,6 +97,9 @@ def main():
     print("===================")
     print(f"libc: {libc_path} via {type(libc).__name__}")
     print(f"Config: SIZE={SIZE} bytes, ITERS={ITERS}, USE_CDLL={use_cdll}")
+
+    # warm-up so shared is valid A
+    memcpy(shared, patA, SIZE)
 
     start_barrier = threading.Barrier(3)
 
