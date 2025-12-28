@@ -48,7 +48,9 @@ class Point:
 # Shared mutable object
 point = Point()
 
-def mover(done: threading.Event):
+def mover(done: threading.Event, start_barrier: threading.Barrier):
+    start_barrier.wait()
+    
     for _ in range(ITERS):
         point.x = 1
         point.y = 2
@@ -56,7 +58,9 @@ def mover(done: threading.Event):
         point.y = 4
     done.set()
 
-def checker(done: threading.Event):
+def checker(done: threading.Event, start_barrier: threading.Barrier):
+    start_barrier.wait()
+
     while not done.is_set():
         x = point.x
         y = point.y
@@ -93,7 +97,7 @@ OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 Config: ITERS=1000000, WIDEN=False, WORK_ITERS=10
 Current thread switch interval: 0.005, setting it to 0.0001
 ===================
-Inconsistent states observed: 42310540
+Inconsistent states observed: 346925
 ```
 
 Forty‑two million "WTFs." So… does free‑threading "break" Python?
@@ -148,14 +152,14 @@ Now even the GIL build can't hide.
 ### GIL build, patched: the bug finally shows its face
 
 ```bash
-PRINT_BYTECODE=1 WIDEN=1 uv run --python 3.14+gil data_races/classic_data_race.py
+WIDEN=1 uv run --python 3.14+gil data_races/classic_data_race.py 
 === environment ===
 Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 Config: ITERS=1000000, WIDEN=True, WORK_ITERS=10
 Current thread switch interval: 0.005, setting it to 0.0001
 ===================
-Inconsistent states observed: 9864401
+Inconsistent states observed: 7745270
 ```
 
 Nine million inconsistent snapshots.
@@ -232,16 +236,17 @@ patB = ctypes.create_string_buffer(b"B" * SIZE)
 
 start = threading.Barrier(3)
 
-def writer(src):
-    start.wait()
+def writer(src, start_barrier: threading.Barrier):
+    start_barrier.wait()
     for _ in range(ITERS):
         memcpy(shared, src, SIZE)
 
-def reader():
-    start.wait()
+def reader(start_barrier: threading.Barrier):
+    start_barrier.wait()
     tearing = 0
     for _ in range(ITERS):
         memcpy(snap, shared, SIZE)  # snapshot
+        # Check whether the snapshot is exactly A or exactly B
         if memcmp(snap, patA, SIZE) != 0 and memcmp(snap, patB, SIZE) != 0:
             tearing += 1
     print(f"tearing={tearing}")
@@ -278,7 +283,7 @@ OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 ===================
 libc: libc.so.6 via PyDLL
 Config: SIZE=131072 bytes, ITERS=200000, USE_CDLL=False
-tearing=172909
+tearing=175351
 ```
 
 So what the hell happened?
