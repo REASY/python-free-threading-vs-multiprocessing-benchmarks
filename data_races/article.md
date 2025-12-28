@@ -16,6 +16,10 @@ This post is a story about two bugs that were **always there**, but the GIL made
 - **Data race** (C/C++ sense): two threads access the same memory concurrently, at least one is a write, and there is no synchronization. In C/C++, this is *undefined behavior*.
 - In this post: Act 1 is a Python‑level invariant getting observed mid‑update; Act 3 is a deliberate C‑level data race (and the symptom we'll measure is tearing).
 
+## What changes in free‑threading (30 seconds)
+
+Free‑threaded CPython doesn't mean "no locks". It removes the single global lock (the GIL) and replaces it with finer‑grained synchronization to keep the interpreter and object model memory‑safe. That's about CPython's correctness — not your program's: multi‑step updates to shared state still aren't atomic, and without explicit coordination you can observe mid‑update snapshots.
+
 ---
 
 ## Act 1: I went hunting for the most obvious torn invariant possible
@@ -71,6 +75,7 @@ uv run --python 3.14+gil data_races/classic_data_race.py
 === environment ===
 Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
+Config: ITERS=1000000, WIDEN=False, WORK_ITERS=10
 Current thread switch interval: 0.005, setting it to 0.0001
 ===================
 Inconsistent states observed: 0
@@ -85,6 +90,7 @@ uv run --python 3.14t data_races/classic_data_race.py
 === environment ===
 Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
+Config: ITERS=1000000, WIDEN=False, WORK_ITERS=10
 Current thread switch interval: 0.005, setting it to 0.0001
 ===================
 Inconsistent states observed: 42310540
@@ -105,7 +111,7 @@ Why did the GIL build show `0`?
 Because the "bad window" was **tiny**.
 
 In the classic GIL build, only one thread runs Python bytecode at a time. CPython periodically hands off the GIL (roughly guided by `sys.setswitchinterval()`). Additionally, some C code (in the stdlib and extensions) explicitly releases the GIL (e.g. via `Py_BEGIN_ALLOW_THREADS`) around blocking I/O or long‑running work.
-The exact handoff points are implementation details – but the key is that CPython can switch **between** your logically related steps.
+The exact handoff points are implementation details — but the key is that CPython can switch **between** your logically related steps.
 
 Your critical window is:
 
@@ -116,38 +122,37 @@ Those gaps are usually microseconds or less. The scheduler just doesn't land the
 
 So I did the practical thing: I widened the window.
 
-### The "make it obvious" patch
+### The "make it obvious" knob
 
-I widened the window by inserting a tiny CPU‑only function call between the stores:
+I widened the window by doing a tiny bit of CPU‑only work between the stores.
 
-```diff
-+def tiny_cpu_work() -> int:
-+    x = 1
-+    for i in range(10):
-+        x += i % 256
-+    return x
+In the script it's controlled by environment variables:
 
- point.x = 1
-+tiny_cpu_work()
- point.y = 2
-+tiny_cpu_work()
- point.x = 3
-+tiny_cpu_work()
- point.y = 4
-+tiny_cpu_work()
+- `WIDEN=1` to enable widening
+- `WORK_ITERS=...` to tune how much work happens
+- `SWITCH_INTERVAL=...` and `ITERS=...` if you want to tune scheduling pressure
+
+Conceptually it's just:
+
+```python
+point.x = 1
+if WIDEN:
+    tiny_cpu_work(WORK_ITERS)
+point.y = 2
 ```
 
-(Full version in `classic_data_race.py`; I also added `PRINT_BYTECODE=1` to dump the disassembly.)
+(Full version in `classic_data_race.py`; `PRINT_BYTECODE=1` dumps the disassembly.)
 
 Now even the GIL build can't hide.
 
 ### GIL build, patched: the bug finally shows its face
 
 ```bash
-PRINT_BYTECODE=1 uv run --python 3.14+gil data_races/classic_data_race.py
+PRINT_BYTECODE=1 WIDEN=1 uv run --python 3.14+gil data_races/classic_data_race.py
 === environment ===
 Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
+Config: ITERS=1000000, WIDEN=True, WORK_ITERS=10
 Current thread switch interval: 0.005, setting it to 0.0001
 ===================
 Inconsistent states observed: 9864401
@@ -208,13 +213,14 @@ So I wrote a `ctypes` demo:
 ### The code shape (key bits)
 
 ```python
-import ctypes, ctypes.util, threading
+import ctypes, ctypes.util, os, threading
 
-SIZE = 128 * 1024
-ITERS = 200_000
+SIZE = int(os.environ.get("SIZE", 128 * 1024))
+ITERS = int(os.environ.get("ITERS", 200_000))
+use_cdll = os.environ.get("USE_CDLL") == "1"
 
 libc_path = ctypes.util.find_library("c")
-libc = ctypes.PyDLL(libc_path)  # important
+libc = ctypes.CDLL(libc_path) if use_cdll else ctypes.PyDLL(libc_path)  # important
 memcpy = libc.memcpy
 memcmp = libc.memcmp
 
@@ -224,11 +230,15 @@ snap   = (ctypes.c_char * SIZE)()
 patA = ctypes.create_string_buffer(b"A" * SIZE)
 patB = ctypes.create_string_buffer(b"B" * SIZE)
 
+start = threading.Barrier(3)
+
 def writer(src):
+    start.wait()
     for _ in range(ITERS):
         memcpy(shared, src, SIZE)
 
 def reader():
+    start.wait()
     tearing = 0
     for _ in range(ITERS):
         memcpy(snap, shared, SIZE)  # snapshot
@@ -256,6 +266,7 @@ Python (cpython): 3.14.2 (main, Dec  9 2025, 19:03:28) [Clang 21.1.4 ]
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 ===================
 libc: libc.so.6 via PyDLL
+Config: SIZE=131072 bytes, ITERS=200000, USE_CDLL=False
 tearing=0
 ```
 
@@ -266,6 +277,7 @@ Python (cpython): 3.14.2 free-threading build (main, Dec  9 2025, 19:03:17) [Cla
 OS: Linux-6.17.0-8-generic-x86_64-with-glibc2.42, arch x86_64
 ===================
 libc: libc.so.6 via PyDLL
+Config: SIZE=131072 bytes, ITERS=200000, USE_CDLL=False
 tearing=172909
 ```
 
@@ -381,7 +393,8 @@ In pure Python you typically still publish that index/pointer with a `Lock`/`Con
 ## Repro notes
 
 - The absolute counts depend heavily on CPU count, OS scheduling, and tuning (`SIZE`, `ITERS`, and `sys.setswitchinterval()`); treat them as "yes/no" demonstrations.
-- The `ctypes` demo assumes a POSIX-ish `libc`; on a GIL build, `USE_CDLL=1` usually makes tearing show up immediately.
+- For `classic_data_race.py`, `WIDEN=1` widens the window and `WORK_ITERS=...` tunes it; `SWITCH_INTERVAL=...` and `ITERS=...` let you adjust scheduling pressure.
+- The `ctypes` demo assumes a POSIX-ish `libc`; on a GIL build, `USE_CDLL=1` usually makes tearing show up immediately. `SIZE=...` and `ITERS=...` tune the workload, and a `Barrier` starts the threads together for repeatability.
 
 ## References
 

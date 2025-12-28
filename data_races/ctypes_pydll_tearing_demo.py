@@ -16,18 +16,35 @@ Run examples:
 
   # Regular build, but using CDLL (usually shows tearing because CDLL releases the GIL)
   USE_CDLL=1 uv run --python 3.14+gil data_races/ctypes_pydll_tearing_demo.py
+
+  # Tune the workload
+  SIZE=1048576 ITERS=50000 uv run --python 3.14t data_races/ctypes_pydll_tearing_demo.py
 """
 
-import ctypes
-import ctypes.util
-import dis
 import os
 import threading
 import platform
 import sys
+import ctypes
+import ctypes.util
+import dis
 
-SIZE = 128 * 1024  # 128 KiB; bump higher if you want more chaos
-ITERS = 200_000
+DEFAULT_SIZE = 128 * 1024  # 128 KiB
+DEFAULT_ITERS = 200_000
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.replace("_", ""))
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an int, got {raw!r}") from exc
+
+
+SIZE = env_int("SIZE", DEFAULT_SIZE)
+ITERS = env_int("ITERS", DEFAULT_ITERS)
 
 libc_path = ctypes.util.find_library("c")
 if not libc_path:
@@ -85,6 +102,7 @@ def main():
     print(f"OS: {platform.platform()}, arch {platform.machine()}")
     print("===================")
     print(f"libc: {libc_path} via {type(libc).__name__}")
+    print(f"Config: SIZE={SIZE} bytes, ITERS={ITERS}, USE_CDLL={use_cdll}")
 
     start_barrier = threading.Barrier(3)
 

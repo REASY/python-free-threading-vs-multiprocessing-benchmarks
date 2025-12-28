@@ -11,6 +11,9 @@ Run examples:
 
   # Regular build
   uv run --python 3.14+gil data_races/classic_data_race.py
+
+  # Regular build, but widen the race window to make the issue obvious
+  WIDEN=1 uv run --python 3.14+gil data_races/classic_data_race.py
 """
 
 import os
@@ -19,14 +22,45 @@ import sys
 import platform
 import dis
 
-ITERS = 1_000_000
-THREAD_SWITCHING_INTERVAL = 0.0001
+DEFAULT_ITERS = 1_000_000
+DEFAULT_SWITCH_INTERVAL = 0.0001
+DEFAULT_WORK_ITERS = 10
 
 
-def tiny_cpu_work() -> int:
+def env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.replace("_", ""))
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an int, got {raw!r}") from exc
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be a float, got {raw!r}") from exc
+
+
+def env_flag(name: str) -> bool:
+    return os.environ.get(name) == "1"
+
+
+ITERS = env_int("ITERS", DEFAULT_ITERS)
+THREAD_SWITCHING_INTERVAL = env_float("SWITCH_INTERVAL", DEFAULT_SWITCH_INTERVAL)
+WIDEN = env_flag("WIDEN")
+WORK_ITERS = env_int("WORK_ITERS", DEFAULT_WORK_ITERS)
+
+
+def tiny_cpu_work(work_iters: int) -> int:
     x = 1
-    for i in range(10):
-        x += i % 256
+    for i in range(work_iters):
+        x += i & 255
     return x
 
 
@@ -45,26 +79,48 @@ point = Point()
 VALID_STATES = {(0, 0), (1, 2), (3, 4)}
 
 
-def mover(has_completed_event: threading.Event):
+def mover(has_completed_event: threading.Event, start_barrier: threading.Barrier):
     # This modifies two attributes - NOT atomic!
+    try:
+        start_barrier.wait()
+    except threading.BrokenBarrierError:
+        return
+
+    work_iters = WORK_ITERS
+
+    if not WIDEN:
+        for _ in range(ITERS):
+            # Without synchronization, another thread could read between these assignments
+            point.x = 1
+            point.y = 2
+            point.x = 3
+            point.y = 4
+        has_completed_event.set()
+        return
+
     for _ in range(ITERS):
         # Without synchronization, another thread could read between these assignments
         point.x = 1
-        tiny_cpu_work()
+        tiny_cpu_work(work_iters)
 
         point.y = 2
-        tiny_cpu_work()
+        tiny_cpu_work(work_iters)
 
         point.x = 3
-        tiny_cpu_work()
+        tiny_cpu_work(work_iters)
 
         point.y = 4
-        tiny_cpu_work()
+        tiny_cpu_work(work_iters)
     has_completed_event.set()
 
 
-def checker(has_completed_event: threading.Event):
+def checker(has_completed_event: threading.Event, start_barrier: threading.Barrier):
     inconsistent_states = 0
+    try:
+        start_barrier.wait()
+    except threading.BrokenBarrierError:
+        return
+
     while not has_completed_event.is_set():
         # Read both values
         x = point.x
@@ -82,6 +138,7 @@ def main():
     print("=== environment ===")
     print(f"Python ({sys.implementation.name}): {sys.version}")
     print(f"OS: {platform.platform()}, arch {platform.machine()}")
+    print(f"Config: ITERS={ITERS}, WIDEN={WIDEN}, WORK_ITERS={WORK_ITERS}")
     print(
         f"Current thread switch interval: {sys.getswitchinterval()}, setting it to {THREAD_SWITCHING_INTERVAL}"
     )
@@ -89,9 +146,10 @@ def main():
     print("===================")
 
     has_completed_event = threading.Event()
+    start_barrier = threading.Barrier(2)
 
-    t1 = threading.Thread(target=mover, args=(has_completed_event,))
-    t2 = threading.Thread(target=checker, args=(has_completed_event,))
+    t1 = threading.Thread(target=mover, args=(has_completed_event, start_barrier))
+    t2 = threading.Thread(target=checker, args=(has_completed_event, start_barrier))
 
     t1.start()
     t2.start()
