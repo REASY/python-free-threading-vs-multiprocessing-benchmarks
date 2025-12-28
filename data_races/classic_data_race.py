@@ -16,39 +16,16 @@ Run examples:
   WIDEN=1 uv run --python 3.14+gil data_races/classic_data_race.py
 """
 
-import os
 import threading
 import sys
 import platform
 import dis
 
+from util import env_int, env_float, env_flag
+
 DEFAULT_ITERS = 1_000_000
 DEFAULT_SWITCH_INTERVAL = 0.0001
 DEFAULT_WORK_ITERS = 10
-
-
-def env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw.replace("_", ""))
-    except ValueError as exc:
-        raise SystemExit(f"{name} must be an int, got {raw!r}") from exc
-
-
-def env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError as exc:
-        raise SystemExit(f"{name} must be a float, got {raw!r}") from exc
-
-
-def env_flag(name: str) -> bool:
-    return os.environ.get(name) == "1"
 
 
 ITERS = env_int("ITERS", DEFAULT_ITERS)
@@ -79,13 +56,8 @@ point = Point()
 VALID_STATES = {(0, 0), (1, 2), (3, 4)}
 
 
-def mover(has_completed_event: threading.Event, start_barrier: threading.Barrier):
-    # This modifies two attributes - NOT atomic!
-    try:
-        start_barrier.wait()
-    except threading.BrokenBarrierError:
-        return
-
+def mover(done: threading.Event, start_barrier: threading.Barrier):
+    start_barrier.wait()
     work_iters = WORK_ITERS
 
     if not WIDEN:
@@ -95,7 +67,7 @@ def mover(has_completed_event: threading.Event, start_barrier: threading.Barrier
             point.y = 2
             point.x = 3
             point.y = 4
-        has_completed_event.set()
+        done.set()
         return
 
     for _ in range(ITERS):
@@ -111,17 +83,14 @@ def mover(has_completed_event: threading.Event, start_barrier: threading.Barrier
 
         point.y = 4
         tiny_cpu_work(work_iters)
-    has_completed_event.set()
+    done.set()
 
 
-def checker(has_completed_event: threading.Event, start_barrier: threading.Barrier):
+def checker(done: threading.Event, start_barrier: threading.Barrier):
     inconsistent_states = 0
-    try:
-        start_barrier.wait()
-    except threading.BrokenBarrierError:
-        return
+    start_barrier.wait()
 
-    while not has_completed_event.is_set():
+    while not done.is_set():
         # Read both values
         x = point.x
         y = point.y
@@ -157,7 +126,7 @@ def main():
     t2.join()
     print()
 
-    if os.environ.get("PRINT_BYTECODE") == "1":
+    if env_flag("PRINT_BYTECODE"):
         print("=== Python's bytecode of `mover` ===")
         dis.dis(mover)
 

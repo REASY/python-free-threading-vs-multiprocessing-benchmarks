@@ -21,36 +21,26 @@ Run examples:
   SIZE=1048576 ITERS=50000 uv run --python 3.14t data_races/ctypes_pydll_tearing_demo.py
 """
 
-import os
 import threading
 import platform
 import sys
 import ctypes
-import ctypes.util
+from ctypes import util as ctypes_util
 import dis
+
+from util import env_int, env_flag
 
 DEFAULT_SIZE = 128 * 1024  # 128 KiB
 DEFAULT_ITERS = 200_000
 
-
-def env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw.replace("_", ""))
-    except ValueError as exc:
-        raise SystemExit(f"{name} must be an int, got {raw!r}") from exc
-
-
 SIZE = env_int("SIZE", DEFAULT_SIZE)
 ITERS = env_int("ITERS", DEFAULT_ITERS)
 
-libc_path = ctypes.util.find_library("c")
+libc_path = ctypes_util.find_library("c")
 if not libc_path:
     raise RuntimeError("Couldn't find libc (this demo is for Linux/macOS).")
 
-use_cdll = os.environ.get("USE_CDLL") == "1"
+use_cdll = env_flag("USE_CDLL")
 if use_cdll:
     libc = ctypes.CDLL(libc_path)
 else:
@@ -114,7 +104,7 @@ def main():
     t2.join()
     tr.join()
 
-    if os.environ.get("PRINT_BYTECODE") == "1":
+    if env_flag("PRINT_BYTECODE"):
         print("=== Python's bytecode of `writer` ===")
         dis.dis(writer)
 
