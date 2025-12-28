@@ -10,7 +10,15 @@ This post is a story about two bugs that were **always there**, but the GIL made
 
 ---
 
-## Act 1: I went hunting for the most obvious data race possible
+## Terms (one minute)
+
+- **Race condition**: the outcome depends on timing/interleaving; you can have one even if no single machine word is being "torn."
+- **Data race** (C/C++ sense): two threads access the same memory concurrently, at least one is a write, and there is no synchronization. In C/C++, this is *undefined behavior*.
+- In this post: Act 1 is a Python‑level invariant getting observed mid‑update; Act 3 is a deliberate C‑level data race (and the symptom we'll measure is tearing).
+
+---
+
+## Act 1: I went hunting for the most obvious torn invariant possible
 
 I wanted a concurrency bug that's basically a meme:
 
@@ -23,7 +31,7 @@ Here's the idea (simplified):
 ```python
 import threading
 
-ITERS = 10000000
+ITERS = 1_000_000
 
 class Point:
     def __init__(self):
@@ -96,7 +104,8 @@ Why did the GIL build show `0`?
 
 Because the "bad window" was **tiny**.
 
-In the GIL build, only one thread runs Python bytecode at a time. Thread switching happens *between bytecode instructions*, and the switching cadence is typically on the millisecond scale (with `sys.setswitchinterval()` being more of a polite suggestion than a contract).
+In the classic GIL build, only one thread runs Python bytecode at a time. CPython periodically hands off the GIL (roughly guided by `sys.setswitchinterval()`). Additionally, some C code (in the stdlib and extensions) explicitly releases the GIL (e.g. via `Py_BEGIN_ALLOW_THREADS`) around blocking I/O or long‑running work.
+The exact handoff points are implementation details – but the key is that CPython can switch **between** your logically related steps.
 
 Your critical window is:
 
@@ -109,60 +118,26 @@ So I did the practical thing: I widened the window.
 
 ### The "make it obvious" patch
 
-I inserted a tiny CPU‑only function call between the stores:
+I widened the window by inserting a tiny CPU‑only function call between the stores:
 
 ```diff
-diff --git a/data_races/classic_data_race.py b/data_races/classic_data_race.py
-index c078f5d..500f9e5 100644
---- a/data_races/classic_data_race.py
-+++ b/data_races/classic_data_race.py
-@@ -13,14 +13,23 @@ Run examples:
-   uv run --python 3.14+gil data_races/classic_data_race.py
- """
-
-+import os
- import threading
- import sys
- import platform
-+import dis
-
--ITERS = 100000000
-+ITERS = 1000000
- THREAD_SWITCHING_INTERVAL = 0.0001
-
 +def tiny_cpu_work() -> int:
 +    x = 1
 +    for i in range(10):
 +        x += i % 256
 +    return x
-+
-+
- class Point:
-     def __init__(self):
-         self.x = 0
-@@ -39,9 +48,16 @@ def mover(has_completed_event: threading.Event):
-     for _ in range(ITERS):
-         # Without synchronization, another thread could read between these assignments
-         point.x = 1
-+        tiny_cpu_work()
-+
-         point.y = 2
-+        tiny_cpu_work()
-+
-         point.x = 3
-+        tiny_cpu_work()
-+
-         point.y = 4
-+        tiny_cpu_work()
-     has_completed_event.set()
-@@ -85,6 +101,10 @@ def main():
-     t2.join()
-     print()
-+
-+    if os.environ.get("PRINT_BYTECODE") == "1":
-+        print("=== Python's bytecode of `mover` ===")
-+        dis.dis(mover)
+
+ point.x = 1
++tiny_cpu_work()
+ point.y = 2
++tiny_cpu_work()
+ point.x = 3
++tiny_cpu_work()
+ point.y = 4
++tiny_cpu_work()
 ```
+
+(Full version in `classic_data_race.py`; I also added `PRINT_BYTECODE=1` to dump the disassembly.)
 
 Now even the GIL build can't hide.
 
@@ -188,10 +163,12 @@ Same interpreter family. Same "GIL safety." Different visibility.
 
 Here's the nuance people half‑remember:
 
-- **A single bytecode instruction** is executed while holding the GIL, so from Python's POV that *one step* is "atomic‑ish".
-- **The invariant is multiple bytecodes.** That's the whole problem.
+- In the classic build, CPython executes Python bytecode while holding the GIL, which makes individual interpreter steps "atomic‑ish" with respect to other Python threads.
+- But the invariant spans **multiple steps**, and steps can include function calls (which may run arbitrary Python/C code). That's the whole problem.
 
 My `mover` isn't "one action." It's a sequence of actions:
+
+(This is schematic — real `dis` output is noisier, especially on 3.11+ — but the important part is that the stores/calls are distinct steps.)
 
 ```text
 STORE_ATTR x
@@ -268,6 +245,8 @@ You can feel the bug from across the room:
 
 That's not "a race condition" in the casual sense. That's a **data race** on raw bytes.
 
+At the C level this is *undefined behavior*: tearing is a common symptom, but crashes, hangs, or "looks fine on my machine" are all valid outcomes too.
+
 ### The output (same script, two builds)
 
 ```bash
@@ -319,6 +298,8 @@ So your program looks "safe" not because `memcpy` is atomic (it absolutely is no
 That's the second punchline:
 
 > **You weren't writing a lock‑free program. You were outsourcing synchronization to the GIL.**
+
+If you want to see tearing on a classic GIL build too, swap `PyDLL` → `CDLL` (or run my script with `USE_CDLL=1`). `ctypes.CDLL` releases the GIL, so the `memcpy()` calls can overlap even on `+gil`.
 
 Now enter free‑threading:
 
@@ -374,17 +355,17 @@ Then readers do:
 x, y = point.xy
 ```
 
-One read → no torn pair.
+One read → no torn pair. Readers observe either the old tuple or the new tuple because there's only one shared publication point. This is consistency, not coordination: if readers/writers need a handoff point ("everyone sees the new value now"), use a lock/condition/queue.
 
 ### Fix #3 (sexy): double‑buffer and swap
 
 For the `memcpy()` case:
 
 - writers write into their own private buffers
-- publish by swapping an index / pointer
+- publish by swapping an index / pointer (atomic + with proper ordering)
 - reader always copies from the published buffer
 
-This is how you avoid locks in high‑throughput systems without lying to yourself about "atomic memcpy."
+In pure Python you typically still publish that index/pointer with a `Lock`/`Condition` (or a higher‑level primitive). Truly lock‑free publication usually means atomics in C.
 
 ---
 
@@ -396,6 +377,11 @@ This is how you avoid locks in high‑throughput systems without lying to yourse
 - Free‑threading didn't break your program. It stopped hiding the parts that were already wrong.
 
 ---
+
+## Repro notes
+
+- The absolute counts depend heavily on CPU count, OS scheduling, and tuning (`SIZE`, `ITERS`, and `sys.setswitchinterval()`); treat them as "yes/no" demonstrations.
+- The `ctypes` demo assumes a POSIX-ish `libc`; on a GIL build, `USE_CDLL=1` usually makes tearing show up immediately.
 
 ## References
 

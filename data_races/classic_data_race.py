@@ -19,7 +19,7 @@ import sys
 import platform
 import dis
 
-ITERS = 1000000
+ITERS = 1_000_000
 THREAD_SWITCHING_INTERVAL = 0.0001
 
 
@@ -41,6 +41,8 @@ class Point:
 
 # Shared mutable object
 point = Point()
+
+VALID_STATES = {(0, 0), (1, 2), (3, 4)}
 
 
 def mover(has_completed_event: threading.Event):
@@ -69,12 +71,8 @@ def checker(has_completed_event: threading.Event):
         y = point.y
 
         # These are the only valid combinations: (0,0), (1,2), (3,4)
-        # But without synchronization, we could see: (1,0), (3,2), (1,4)
-        if x == 1 and y != 2:
-            inconsistent_states += 1
-        elif x == 3 and y != 4:
-            inconsistent_states += 1
-        elif x not in (0, 1, 3):
+        # But without synchronization, we could see: (1,0), (3,2), (1,4), etc.
+        if (x, y) not in VALID_STATES:
             inconsistent_states += 1
 
     print(f"Inconsistent states observed: {inconsistent_states}")
