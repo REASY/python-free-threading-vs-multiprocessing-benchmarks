@@ -100,7 +100,7 @@ Current thread switch interval: 0.005, setting it to 0.0001
 Inconsistent states observed: 346925
 ```
 
-Forty‑two million "WTFs." So… does free‑threading "break" Python?
+Hundreds of thousands of "WTFs." So… does free‑threading "break" Python?
 
 No.
 
@@ -162,7 +162,7 @@ Current thread switch interval: 0.005, setting it to 0.0001
 Inconsistent states observed: 7745270
 ```
 
-Nine million inconsistent snapshots.
+Seven million inconsistent snapshots.
 
 Same interpreter family. Same "GIL safety." Different visibility.
 
@@ -332,7 +332,7 @@ So the reader sees mixed snapshots like:
 AAAAAA...AAA BBBBBB...BBB AAAAA...  (torn buffer)
 ```
 
-Boom: `tearing=172909`.
+Boom: `tearing=175351`.
 
 Free‑threading didn't "break ctypes." It removed your accidental global mutex.
 
@@ -359,20 +359,24 @@ For the `Point(x, y)` case:
 - publish a single immutable snapshot, e.g. one attribute holding a tuple
 - reader grabs one object reference → consistent view
 
-Example shape:
+Example:
 
 ```python
+class Point:
+    def __init__(self):
+        self.xy = (0, 0)
+
+# mover thread
 point.xy = (1, 2)   # publish new snapshot
 point.xy = (3, 4)
+
+# reader thread
+x, y = point.xy     # one read -> no torn pair
 ```
 
-Then readers do:
+One read of `point.xy` returns a reference to a single tuple object. Because the tuple itself is immutable, you see either the old pair or the new pair, never a mix.
 
-```python
-x, y = point.xy
-```
-
-One read → no torn pair. Readers observe either the old tuple or the new tuple because there's only one shared publication point. This is consistency, not coordination: if readers/writers need a handoff point ("everyone sees the new value now"), use a lock/condition/queue.
+> Note that this ensures **consistency** (no tearing), but not necessarily **visibility** (the reader might see a stale value for a few cycles) or **coordination**. If you need to ensure the reader sees the *latest* value immediately, you still need a lock or other synchronization.
 
 ### Fix #3 (sexy): double‑buffer and swap
 
